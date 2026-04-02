@@ -1,0 +1,58 @@
+{{- if .Values.injection.enabled }}
+{{- $kumoEndpoint := printf "http://%s.%s.svc.cluster.local:4566" (include "kumo.fullname" .) .Release.Namespace }}
+{{- $defaultNamespaceSelector := dict "matchLabels" (dict .Values.injection.namespaceLabelKey .Values.injection.namespaceLabelValue) }}
+{{- $namespaceSelector := .Values.injection.namespaceSelector | default $defaultNamespaceSelector }}
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: {{ include "kumo.fullname" . }}-inject-aws-env
+  labels:
+    {{- include "kumo.labels" . | nindent 4 }}
+  annotations:
+    policies.kyverno.io/title: Inject AWS kumo endpoint
+    policies.kyverno.io/description: >-
+      Inject AWS_ENDPOINT_URL environment variable into Pods
+      to redirect AWS API calls to kumo.
+spec:
+  failurePolicy: {{ .Values.injection.failurePolicy }}
+  mutateExistingOnPolicyUpdate: false
+  rules:
+    - name: inject-aws-env
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaceSelector:
+{{ toYaml $namespaceSelector | indent 16 }}
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - {{ .Release.Namespace }}
+      mutate:
+        patchStrategicMerge:
+          spec:
+            containers:
+              - (name): "*"
+                env:
+                  - name: AWS_ENDPOINT_URL
+                    value: {{ $kumoEndpoint | quote }}
+                  - name: AWS_ACCESS_KEY_ID
+                    value: {{ .Values.injection.aws.accessKeyId | quote }}
+                  - name: AWS_SECRET_ACCESS_KEY
+                    value: {{ .Values.injection.aws.secretAccessKey | quote }}
+                  - name: AWS_DEFAULT_REGION
+                    value: {{ .Values.injection.aws.region | quote }}
+            initContainers:
+              - (name): "*"
+                env:
+                  - name: AWS_ENDPOINT_URL
+                    value: {{ $kumoEndpoint | quote }}
+                  - name: AWS_ACCESS_KEY_ID
+                    value: {{ .Values.injection.aws.accessKeyId | quote }}
+                  - name: AWS_SECRET_ACCESS_KEY
+                    value: {{ .Values.injection.aws.secretAccessKey | quote }}
+                  - name: AWS_DEFAULT_REGION
+                    value: {{ .Values.injection.aws.region | quote }}
+{{- end }}
