@@ -1,0 +1,68 @@
+name: Helm E2E Test
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'charts/**'
+      - 'test/e2e/**'
+      - '.github/workflows/helm-e2e.yaml'
+  pull_request:
+    paths:
+      - 'charts/**'
+      - 'test/e2e/**'
+      - '.github/workflows/helm-e2e.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  helm-e2e:
+    name: Helm chart E2E (kind + Kyverno + AWS LB Controller)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install kind
+        uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+
+      - name: Verify prerequisites
+        run: |
+          kind --version
+          helm version --short
+          kubectl version --client
+          aws --version
+
+      - name: Run E2E test
+        run: bash test/e2e/helm-e2e.sh
+
+      - name: Diagnostics (on failure)
+        if: failure()
+        run: |
+          echo "=== kind cluster info ==="
+          kubectl cluster-info --context kind-kumo-e2e 2>/dev/null || true
+          echo ""
+          echo "=== All pods ==="
+          kubectl get pods -A -o wide 2>/dev/null || true
+          echo ""
+          echo "=== Events ==="
+          kubectl get events -A --sort-by='.lastTimestamp' 2>/dev/null | tail -40 || true
+          echo ""
+          echo "=== Kyverno ClusterPolicy ==="
+          kubectl get clusterpolicy -o wide 2>/dev/null || true
+          echo ""
+          echo "=== kumo svc/endpoints ==="
+          kubectl get svc,endpoints -n kumo-system 2>/dev/null || true
+          echo ""
+          echo "=== AWS LB Controller logs ==="
+          kubectl logs -n kube-system -l app.kubernetes.io/name=aws-load-balancer-controller --tail=100 2>/dev/null || true
+          echo ""
+          echo "=== kumo logs ==="
+          kubectl logs -n kumo-system -l app.kubernetes.io/name=kumo --tail=100 2>/dev/null || true
