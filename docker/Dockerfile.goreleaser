@@ -1,8 +1,12 @@
 FROM alpine:3.20
 
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates \
+    && addgroup -S kumo && adduser -S kumo -G kumo \
+    && mkdir -p /data && chown kumo:kumo /data
 
 COPY kumo /usr/local/bin/kumo
+
+USER kumo
 
 EXPOSE 4566
 
