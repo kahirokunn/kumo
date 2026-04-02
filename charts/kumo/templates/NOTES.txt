@@ -1,0 +1,21 @@
+kumo has been deployed to namespace {{ .Release.Namespace }}.
+
+Endpoint: http://{{ include "kumo.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:4566
+{{- if .Values.injection.enabled }}
+
+Kyverno ClusterPolicy is ENABLED.
+{{- if empty .Values.injection.namespaceSelector }}
+Label your namespaces to enable AWS endpoint injection:
+
+  kubectl label namespace <namespace> {{ .Values.injection.namespaceLabelKey }}={{ .Values.injection.namespaceLabelValue }}
+{{- else }}
+Custom namespaceSelector is configured.
+Review your values to determine which namespaces opt in to injection.
+{{- end }}
+{{- else }}
+
+Kyverno ClusterPolicy is DISABLED (default).
+To enable automatic AWS_ENDPOINT_URL injection into Pods, set:
+
+  helm upgrade {{ .Release.Name }} kumo --set injection.enabled=true
+{{- end }}
