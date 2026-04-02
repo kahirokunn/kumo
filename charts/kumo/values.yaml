@@ -1,0 +1,52 @@
+# -- kumo server settings
+kumo:
+  image:
+    registry: ghcr.io
+    repository: sivchari/kumo
+    # -- Overrides the image tag whose default is the chart appVersion
+    tag: ""
+  logLevel: info
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# -- Data persistence (PVC via StatefulSet volumeClaimTemplates)
+persistence:
+  size: 1Gi
+  storageClass: ""
+
+# -- AWS environment variable injection settings (requires Kyverno)
+injection:
+  # -- Enable Kyverno ClusterPolicy for automatic AWS_ENDPOINT_URL injection
+  enabled: false
+
+  # -- ClusterPolicy failurePolicy (Fail or Ignore)
+  failurePolicy: Fail
+
+  # -- Maintainer-owned opt-in label key for AWS env injection.
+  # Override when kumo gets a canonical project domain.
+  namespaceLabelKey: "sivchari.github.io/kumo-inject"
+
+  # -- Value required on namespaceLabelKey for opt-in injection.
+  namespaceLabelValue: "enabled"
+
+  # -- Advanced override for the Kyverno namespaceSelector.
+  # Leave empty to use namespaceLabelKey/namespaceLabelValue.
+  namespaceSelector: {}
+
+  # -- AWS credentials and region to inject (dummy values for emulator)
+  aws:
+    region: us-east-1
+    accessKeyId: test
+    secretAccessKey: test
+
+# -- NetworkPolicy (egress deny-all for security hardening)
+networkPolicy:
+  enabled: true
+
+nameOverride: ""
+fullnameOverride: ""
