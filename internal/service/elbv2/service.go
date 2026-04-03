@@ -68,6 +68,10 @@ func (s *Service) Actions() []string {
 		"RegisterTargets",
 		"DeregisterTargets",
 		"CreateListener",
+		"CreateRule",
+		"DescribeListeners",
+		"DescribeRules",
+		"DescribeListenerAttributes",
 		"DeleteListener",
 	}
 }

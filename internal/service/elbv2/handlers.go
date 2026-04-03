@@ -121,7 +121,6 @@ func (s *Service) DescribeLoadBalancers(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-
 // DescribeLoadBalancerAttributes handles the DescribeLoadBalancerAttributes action.
 func (s *Service) DescribeLoadBalancerAttributes(w http.ResponseWriter, r *http.Request) {
 	var req DescribeLoadBalancerAttributesRequest
@@ -360,7 +359,6 @@ func (s *Service) DescribeTargetGroups(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
 // DescribeTargetGroupAttributes handles the DescribeTargetGroupAttributes action.
 func (s *Service) DescribeTargetGroupAttributes(w http.ResponseWriter, r *http.Request) {
 	var req DescribeTargetGroupAttributesRequest
@@ -458,6 +456,9 @@ func (s *Service) RegisterTargets(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
+	if len(req.Targets) == 0 {
+		req.Targets = parseELBTargetsFromForm(r.Form, "Targets.member")
+	}
 
 	if req.TargetGroupArn == "" {
 		writeELBError(w, errInvalidParameter, "TargetGroupArn is required", http.StatusBadRequest)
@@ -486,6 +487,9 @@ func (s *Service) DeregisterTargets(w http.ResponseWriter, r *http.Request) {
 		writeELBError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
 
 		return
+	}
+	if len(req.Targets) == 0 {
+		req.Targets = parseELBTargetsFromForm(r.Form, "Targets.member")
 	}
 
 	if req.TargetGroupArn == "" {
@@ -523,6 +527,12 @@ func (s *Service) CreateListener(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if tags := parseELBTagsFromForm(r.Form, "Tags.member"); tags != nil {
+		req.Tags = tags
+	}
+	if len(req.DefaultActions) == 0 {
+		req.DefaultActions = parseELBActionsFromForm(r.Form, "DefaultActions.member")
+	}
 
 	listener, err := s.storage.CreateListener(r.Context(), &req)
 	if err != nil {
@@ -542,6 +552,133 @@ func (s *Service) CreateListener(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// CreateRule handles the CreateRule action.
+func (s *Service) CreateRule(w http.ResponseWriter, r *http.Request) {
+	var req CreateRuleRequest
+	if err := readELBJSONRequest(r, &req); err != nil {
+		writeELBError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+
+	if req.ListenerArn == "" {
+		writeELBError(w, errInvalidParameter, "ListenerArn is required", http.StatusBadRequest)
+
+		return
+	}
+
+	if tags := parseELBTagsFromForm(r.Form, "Tags.member"); tags != nil {
+		req.Tags = tags
+	}
+	if len(req.Actions) == 0 {
+		req.Actions = parseELBActionsFromForm(r.Form, "Actions.member")
+	}
+	if len(req.Conditions) == 0 {
+		req.Conditions = parseELBRuleConditionsFromForm(r.Form, "Conditions.member")
+	}
+
+	rule, err := s.storage.CreateRule(r.Context(), &req)
+	if err != nil {
+		handleELBError(w, err)
+
+		return
+	}
+
+	writeELBXMLResponse(w, XMLCreateRuleResponse{
+		Xmlns: elbXMLNS,
+		Result: XMLCreateRuleResult{
+			Rules: XMLRules{
+				Members: []XMLRule{convertToXMLRule(rule)},
+			},
+		},
+		ResponseMetadata: XMLResponseMetadata{RequestID: uuid.New().String()},
+	})
+}
+
+// DescribeListeners handles the DescribeListeners action.
+func (s *Service) DescribeListeners(w http.ResponseWriter, r *http.Request) {
+	var req DescribeListenersRequest
+	if err := readELBJSONRequest(r, &req); err != nil {
+		writeELBError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+
+	listeners, err := s.storage.DescribeListeners(r.Context(), req.ListenerArns, req.LoadBalancerArn)
+	if err != nil {
+		handleELBError(w, err)
+
+		return
+	}
+
+	xmlListeners := make([]XMLListener, 0, len(listeners))
+	for _, listener := range listeners {
+		xmlListeners = append(xmlListeners, convertToXMLListener(listener))
+	}
+
+	writeELBXMLResponse(w, XMLDescribeListenersResponse{
+		Xmlns: elbXMLNS,
+		Result: XMLDescribeListenersResult{
+			Listeners: XMLListeners{Members: xmlListeners},
+		},
+		ResponseMetadata: XMLResponseMetadata{RequestID: uuid.New().String()},
+	})
+}
+
+// DescribeRules handles the DescribeRules action.
+func (s *Service) DescribeRules(w http.ResponseWriter, r *http.Request) {
+	var req DescribeRulesRequest
+	if err := readELBJSONRequest(r, &req); err != nil {
+		writeELBError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+
+	rules, err := s.storage.DescribeRules(r.Context(), req.ListenerArn, req.RuleArns)
+	if err != nil {
+		handleELBError(w, err)
+
+		return
+	}
+
+	xmlRules := make([]XMLRule, 0, len(rules))
+	for _, rule := range rules {
+		xmlRules = append(xmlRules, convertToXMLRule(rule))
+	}
+
+	writeELBXMLResponse(w, XMLDescribeRulesResponse{
+		Xmlns: elbXMLNS,
+		Result: XMLDescribeRulesResult{
+			Rules: XMLRules{Members: xmlRules},
+		},
+		ResponseMetadata: XMLResponseMetadata{RequestID: uuid.New().String()},
+	})
+}
+
+// DescribeListenerAttributes handles the DescribeListenerAttributes action.
+func (s *Service) DescribeListenerAttributes(w http.ResponseWriter, r *http.Request) {
+	var req DescribeListenerAttributesRequest
+	if err := readELBJSONRequest(r, &req); err != nil {
+		writeELBError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+
+	attributes, err := s.storage.DescribeListenerAttributes(r.Context(), req.ListenerArn)
+	if err != nil {
+		handleELBError(w, err)
+
+		return
+	}
+
+	writeELBXMLResponse(w, XMLDescribeListenerAttributesResponse{
+		Xmlns: elbXMLNS,
+		Result: XMLDescribeListenerAttributesResult{
+			Attributes: convertToXMLAttributes(attributes),
+		},
+		ResponseMetadata: XMLResponseMetadata{RequestID: uuid.New().String()},
+	})
+}
 
 // DeleteListener handles the DeleteListener action.
 func (s *Service) DeleteListener(w http.ResponseWriter, r *http.Request) {
@@ -606,6 +743,10 @@ func (s *Service) getActionHandler(action string) func(http.ResponseWriter, *htt
 		"RegisterTargets":                s.RegisterTargets,
 		"DeregisterTargets":              s.DeregisterTargets,
 		"CreateListener":                 s.CreateListener,
+		"CreateRule":                     s.CreateRule,
+		"DescribeListeners":              s.DescribeListeners,
+		"DescribeRules":                  s.DescribeRules,
+		"DescribeListenerAttributes":     s.DescribeListenerAttributes,
 		"DeleteListener":                 s.DeleteListener,
 	}
 
@@ -661,7 +802,6 @@ func convertToXMLTargetGroup(tg *TargetGroup) XMLTargetGroup {
 	}
 }
 
-
 func convertToXMLTargetHealthDescription(description *TargetHealthDescription) XMLTargetHealthDescription {
 	return XMLTargetHealthDescription{
 		Target: XMLTarget{
@@ -681,7 +821,7 @@ func convertToXMLTargetHealthDescription(description *TargetHealthDescription) X
 func convertToXMLListener(l *Listener) XMLListener {
 	actions := make([]XMLAction, 0, len(l.DefaultActions))
 	for _, a := range l.DefaultActions {
-		actions = append(actions, XMLAction(a))
+		actions = append(actions, convertToXMLAction(a))
 	}
 
 	return XMLListener{
@@ -693,6 +833,75 @@ func convertToXMLListener(l *Listener) XMLListener {
 	}
 }
 
+// convertToXMLRule converts a Rule to XMLRule.
+func convertToXMLRule(rule *Rule) XMLRule {
+	actions := make([]XMLAction, 0, len(rule.Actions))
+	for _, action := range rule.Actions {
+		actions = append(actions, convertToXMLAction(action))
+	}
+
+	conditions := make([]XMLRuleCondition, 0, len(rule.Conditions))
+	for _, condition := range rule.Conditions {
+		conditions = append(conditions, convertToXMLRuleCondition(condition))
+	}
+
+	return XMLRule{
+		RuleArn:    rule.RuleArn,
+		Priority:   strconv.Itoa(rule.Priority),
+		IsDefault:  rule.IsDefault,
+		Actions:    XMLActions{Members: actions},
+		Conditions: XMLRuleConditions{Members: conditions},
+	}
+}
+
+func convertToXMLAction(action Action) XMLAction {
+	xmlAction := XMLAction{
+		Type:           action.Type,
+		TargetGroupArn: action.TargetGroupArn,
+		Order:          action.Order,
+	}
+
+	if action.ForwardConfig != nil {
+		targetGroups := make([]XMLTargetGroupTuple, 0, len(action.ForwardConfig.TargetGroups))
+		for _, targetGroup := range action.ForwardConfig.TargetGroups {
+			targetGroups = append(targetGroups, XMLTargetGroupTuple{
+				TargetGroupArn: targetGroup.TargetGroupArn,
+				Weight:         targetGroup.Weight,
+			})
+		}
+		xmlAction.ForwardConfig = &XMLForwardConfig{
+			TargetGroups: XMLTargetGroupTuples{Members: targetGroups},
+		}
+	}
+
+	if action.FixedResponseConfig != nil {
+		xmlAction.FixedResponseConfig = &XMLFixedResponseConfig{
+			ContentType: action.FixedResponseConfig.ContentType,
+			MessageBody: action.FixedResponseConfig.MessageBody,
+			StatusCode:  action.FixedResponseConfig.StatusCode,
+		}
+	}
+
+	return xmlAction
+}
+
+func convertToXMLRuleCondition(condition RuleCondition) XMLRuleCondition {
+	xmlCondition := XMLRuleCondition{
+		Field: condition.Field,
+	}
+
+	if len(condition.Values) > 0 {
+		xmlCondition.Values = XMLStringMembers{Members: append([]string(nil), condition.Values...)}
+	}
+
+	if condition.PathPatternConfig != nil {
+		xmlCondition.PathPatternConfig = &XMLPathPatternConditionConfig{
+			Values: XMLStringMembers{Members: append([]string(nil), condition.PathPatternConfig.Values...)},
+		}
+	}
+
+	return xmlCondition
+}
 
 // convertToXMLTagDescription converts a TagDescription to XMLTagDescription.
 func convertToXMLTagDescription(description *TagDescription) XMLTagDescription {
@@ -706,7 +915,6 @@ func convertToXMLTagDescription(description *TagDescription) XMLTagDescription {
 		Tags:        XMLTags{Members: tags},
 	}
 }
-
 
 // convertToXMLAttributes converts attributes to XMLAttributes.
 func convertToXMLAttributes(attributes map[string]string) XMLAttributes {
@@ -870,6 +1078,204 @@ func parseELBSubnetMappingsFromForm(form url.Values, prefix string) []string {
 	return subnetIDs
 }
 
+func parseELBActionsFromForm(form url.Values, prefix string) []Action {
+	entries := make(map[int]*Action)
+	forwardTargetGroups := make(map[int]map[int]string)
+	for key, values := range form {
+		if len(values) == 0 || !strings.HasPrefix(key, prefix+".") {
+			continue
+		}
+
+		parts := strings.Split(key, ".")
+		if len(parts) < 4 {
+			continue
+		}
+
+		index, err := strconv.Atoi(parts[2])
+		if err != nil {
+			continue
+		}
+
+		entry := entries[index]
+		if entry == nil {
+			entry = &Action{}
+			entries[index] = entry
+		}
+
+		switch {
+		case len(parts) == 4 && parts[3] == "Type":
+			entry.Type = values[0]
+		case len(parts) == 4 && parts[3] == "TargetGroupArn":
+			entry.TargetGroupArn = values[0]
+		case len(parts) == 4 && parts[3] == "Order":
+			order, err := strconv.Atoi(values[0])
+			if err == nil {
+				entry.Order = order
+			}
+		case len(parts) == 5 && parts[3] == "FixedResponseConfig":
+			if entry.FixedResponseConfig == nil {
+				entry.FixedResponseConfig = &FixedResponseConfig{}
+			}
+			switch parts[4] {
+			case "ContentType":
+				entry.FixedResponseConfig.ContentType = values[0]
+			case "MessageBody":
+				entry.FixedResponseConfig.MessageBody = values[0]
+			case "StatusCode":
+				entry.FixedResponseConfig.StatusCode = values[0]
+			}
+		case len(parts) == 8 && parts[3] == "ForwardConfig" && parts[4] == "TargetGroups" && parts[5] == "member" && parts[7] == "TargetGroupArn":
+			targetGroupIndex, err := strconv.Atoi(parts[6])
+			if err != nil {
+				continue
+			}
+			if forwardTargetGroups[index] == nil {
+				forwardTargetGroups[index] = make(map[int]string)
+			}
+			forwardTargetGroups[index][targetGroupIndex] = values[0]
+		}
+	}
+
+	if len(entries) == 0 {
+		return nil
+	}
+
+	indexes := make([]int, 0, len(entries))
+	for index := range entries {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+
+	actions := make([]Action, 0, len(indexes))
+	for _, index := range indexes {
+		action := entries[index]
+		if action == nil || action.Type == "" {
+			continue
+		}
+
+		if targetGroups := forwardTargetGroups[index]; len(targetGroups) > 0 {
+			targetGroupIndexes := make([]int, 0, len(targetGroups))
+			for targetGroupIndex := range targetGroups {
+				targetGroupIndexes = append(targetGroupIndexes, targetGroupIndex)
+			}
+			sort.Ints(targetGroupIndexes)
+
+			tuples := make([]TargetGroupTuple, 0, len(targetGroupIndexes))
+			for _, targetGroupIndex := range targetGroupIndexes {
+				tuples = append(tuples, TargetGroupTuple{
+					TargetGroupArn: targetGroups[targetGroupIndex],
+				})
+			}
+
+			action.ForwardConfig = &ForwardConfig{TargetGroups: tuples}
+			if action.TargetGroupArn == "" && len(tuples) == 1 {
+				action.TargetGroupArn = tuples[0].TargetGroupArn
+			}
+		}
+
+		actions = append(actions, *action)
+	}
+
+	return actions
+}
+
+func parseELBRuleConditionsFromForm(form url.Values, prefix string) []RuleCondition {
+	entries := make(map[int]*RuleCondition)
+	valuesByIndex := make(map[int]map[int]string)
+	pathPatternValuesByIndex := make(map[int]map[int]string)
+
+	for key, values := range form {
+		if len(values) == 0 || !strings.HasPrefix(key, prefix+".") {
+			continue
+		}
+
+		parts := strings.Split(key, ".")
+		if len(parts) < 4 {
+			continue
+		}
+
+		index, err := strconv.Atoi(parts[2])
+		if err != nil {
+			continue
+		}
+
+		entry := entries[index]
+		if entry == nil {
+			entry = &RuleCondition{}
+			entries[index] = entry
+		}
+
+		switch {
+		case len(parts) == 4 && parts[3] == "Field":
+			entry.Field = values[0]
+		case len(parts) == 6 && parts[3] == "Values" && parts[4] == "member":
+			valueIndex, err := strconv.Atoi(parts[5])
+			if err != nil {
+				continue
+			}
+			if valuesByIndex[index] == nil {
+				valuesByIndex[index] = make(map[int]string)
+			}
+			valuesByIndex[index][valueIndex] = values[0]
+		case len(parts) == 7 && parts[3] == "PathPatternConfig" && parts[4] == "Values" && parts[5] == "member":
+			valueIndex, err := strconv.Atoi(parts[6])
+			if err != nil {
+				continue
+			}
+			if pathPatternValuesByIndex[index] == nil {
+				pathPatternValuesByIndex[index] = make(map[int]string)
+			}
+			pathPatternValuesByIndex[index][valueIndex] = values[0]
+		}
+	}
+
+	if len(entries) == 0 {
+		return nil
+	}
+
+	indexes := make([]int, 0, len(entries))
+	for index := range entries {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+
+	conditions := make([]RuleCondition, 0, len(indexes))
+	for _, index := range indexes {
+		entry := entries[index]
+		if entry == nil || entry.Field == "" {
+			continue
+		}
+
+		if valueMap := valuesByIndex[index]; len(valueMap) > 0 {
+			entry.Values = orderedELBStringValues(valueMap)
+		}
+
+		if valueMap := pathPatternValuesByIndex[index]; len(valueMap) > 0 {
+			entry.PathPatternConfig = &PathPatternConditionConfig{
+				Values: orderedELBStringValues(valueMap),
+			}
+		}
+
+		conditions = append(conditions, *entry)
+	}
+
+	return conditions
+}
+
+func orderedELBStringValues(indexed map[int]string) []string {
+	indexes := make([]int, 0, len(indexed))
+	for index := range indexed {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+
+	values := make([]string, 0, len(indexes))
+	for _, index := range indexes {
+		values = append(values, indexed[index])
+	}
+
+	return values
+}
 
 func parseELBTargetsFromForm(form url.Values, prefix string) []Target {
 	entries := make(map[int]*Target)

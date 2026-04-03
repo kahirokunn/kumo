@@ -69,6 +69,17 @@ type TargetGroup struct {
 	Attributes                 map[string]string
 }
 
+// Rule represents an ELB listener rule.
+type Rule struct {
+	RuleArn     string
+	ListenerArn string
+	Priority    int
+	IsDefault   bool
+	Actions     []Action
+	Conditions  []RuleCondition
+	Tags        []Tag
+}
+
 // Listener represents an ELB listener.
 type Listener struct {
 	ListenerArn     string
@@ -76,13 +87,47 @@ type Listener struct {
 	Port            int
 	Protocol        string
 	DefaultActions  []Action
+	Tags            []Tag
+	Attributes      map[string]string
 }
 
 // Action represents a listener action.
 type Action struct {
-	Type           string
+	Type                string
+	TargetGroupArn      string
+	Order               int
+	ForwardConfig       *ForwardConfig
+	FixedResponseConfig *FixedResponseConfig
+}
+
+// ForwardConfig represents a forward action configuration.
+type ForwardConfig struct {
+	TargetGroups []TargetGroupTuple
+}
+
+// TargetGroupTuple represents a target group tuple in a forward action.
+type TargetGroupTuple struct {
 	TargetGroupArn string
-	Order          int
+	Weight         int
+}
+
+// FixedResponseConfig represents a fixed response action configuration.
+type FixedResponseConfig struct {
+	ContentType string
+	MessageBody string
+	StatusCode  string
+}
+
+// RuleCondition represents a rule condition.
+type RuleCondition struct {
+	Field             string
+	Values            []string
+	PathPatternConfig *PathPatternConditionConfig
+}
+
+// PathPatternConditionConfig represents a path pattern rule condition.
+type PathPatternConditionConfig struct {
+	Values []string
 }
 
 // Target represents a target in a target group.
@@ -155,23 +200,23 @@ type DescribeLoadBalancersRequest struct {
 
 // CreateTargetGroupRequest represents a CreateTargetGroup request.
 type CreateTargetGroupRequest struct {
-	Name                       string `json:"Name"`
-	Protocol                   string `json:"Protocol,omitempty"`
-	ProtocolVersion            string `json:"ProtocolVersion,omitempty"`
-	Port                       int    `json:"Port,omitempty"`
-	VpcID                      string `json:"VpcId,omitempty"`
-	IPAddressType              string `json:"IpAddressType,omitempty"`
-	HealthCheckProtocol        string `json:"HealthCheckProtocol,omitempty"`
-	HealthCheckPort            string `json:"HealthCheckPort,omitempty"`
-	HealthCheckEnabled         bool   `json:"HealthCheckEnabled,omitempty"`
-	HealthCheckPath            string `json:"HealthCheckPath,omitempty"`
+	Name                       string   `json:"Name"`
+	Protocol                   string   `json:"Protocol,omitempty"`
+	ProtocolVersion            string   `json:"ProtocolVersion,omitempty"`
+	Port                       int      `json:"Port,omitempty"`
+	VpcID                      string   `json:"VpcId,omitempty"`
+	IPAddressType              string   `json:"IpAddressType,omitempty"`
+	HealthCheckProtocol        string   `json:"HealthCheckProtocol,omitempty"`
+	HealthCheckPort            string   `json:"HealthCheckPort,omitempty"`
+	HealthCheckEnabled         bool     `json:"HealthCheckEnabled,omitempty"`
+	HealthCheckPath            string   `json:"HealthCheckPath,omitempty"`
 	Matcher                    *Matcher `json:"Matcher,omitempty"`
-	HealthCheckIntervalSeconds int    `json:"HealthCheckIntervalSeconds,omitempty"`
-	HealthCheckTimeoutSeconds  int    `json:"HealthCheckTimeoutSeconds,omitempty"`
-	HealthyThresholdCount      int    `json:"HealthyThresholdCount,omitempty"`
-	UnhealthyThresholdCount    int    `json:"UnhealthyThresholdCount,omitempty"`
-	TargetType                 string `json:"TargetType,omitempty"`
-	Tags                       []Tag `json:"Tags,omitempty"`
+	HealthCheckIntervalSeconds int      `json:"HealthCheckIntervalSeconds,omitempty"`
+	HealthCheckTimeoutSeconds  int      `json:"HealthCheckTimeoutSeconds,omitempty"`
+	HealthyThresholdCount      int      `json:"HealthyThresholdCount,omitempty"`
+	UnhealthyThresholdCount    int      `json:"UnhealthyThresholdCount,omitempty"`
+	TargetType                 string   `json:"TargetType,omitempty"`
+	Tags                       []Tag    `json:"Tags,omitempty"`
 }
 
 // DeleteTargetGroupRequest represents a DeleteTargetGroup request.
@@ -210,6 +255,33 @@ type CreateListenerRequest struct {
 	Port            int      `json:"Port"`
 	Protocol        string   `json:"Protocol"`
 	DefaultActions  []Action `json:"DefaultActions"`
+	Tags            []Tag    `json:"Tags,omitempty"`
+}
+
+// CreateRuleRequest represents a CreateRule request.
+type CreateRuleRequest struct {
+	ListenerArn string          `json:"ListenerArn"`
+	Priority    int             `json:"Priority"`
+	Actions     []Action        `json:"Actions,omitempty"`
+	Conditions  []RuleCondition `json:"Conditions,omitempty"`
+	Tags        []Tag           `json:"Tags,omitempty"`
+}
+
+// DescribeListenersRequest represents a DescribeListeners request.
+type DescribeListenersRequest struct {
+	LoadBalancerArn string   `json:"LoadBalancerArn,omitempty"`
+	ListenerArns    []string `json:"ListenerArns,omitempty"`
+}
+
+// DescribeRulesRequest represents a DescribeRules request.
+type DescribeRulesRequest struct {
+	ListenerArn string   `json:"ListenerArn,omitempty"`
+	RuleArns    []string `json:"RuleArns,omitempty"`
+}
+
+// DescribeListenerAttributesRequest represents a DescribeListenerAttributes request.
+type DescribeListenerAttributesRequest struct {
+	ListenerArn string `json:"ListenerArn"`
 }
 
 // DeleteListenerRequest represents a DeleteListener request.
@@ -480,6 +552,72 @@ type XMLCreateListenerResult struct {
 	Listeners XMLListeners `xml:"Listeners"`
 }
 
+// XMLCreateRuleResponse is the XML response for CreateRule.
+type XMLCreateRuleResponse struct {
+	XMLName          xml.Name            `xml:"CreateRuleResponse"`
+	Xmlns            string              `xml:"xmlns,attr"`
+	Result           XMLCreateRuleResult `xml:"CreateRuleResult"`
+	ResponseMetadata XMLResponseMetadata `xml:"ResponseMetadata"`
+}
+
+// XMLCreateRuleResult contains the result of CreateRule.
+type XMLCreateRuleResult struct {
+	Rules XMLRules `xml:"Rules"`
+}
+
+// XMLDescribeRulesResponse is the XML response for DescribeRules.
+type XMLDescribeRulesResponse struct {
+	XMLName          xml.Name               `xml:"DescribeRulesResponse"`
+	Xmlns            string                 `xml:"xmlns,attr"`
+	Result           XMLDescribeRulesResult `xml:"DescribeRulesResult"`
+	ResponseMetadata XMLResponseMetadata    `xml:"ResponseMetadata"`
+}
+
+// XMLDescribeRulesResult contains the result of DescribeRules.
+type XMLDescribeRulesResult struct {
+	Rules XMLRules `xml:"Rules"`
+}
+
+// XMLDescribeListenersResponse is the XML response for DescribeListeners.
+type XMLDescribeListenersResponse struct {
+	XMLName          xml.Name                   `xml:"DescribeListenersResponse"`
+	Xmlns            string                     `xml:"xmlns,attr"`
+	Result           XMLDescribeListenersResult `xml:"DescribeListenersResult"`
+	ResponseMetadata XMLResponseMetadata        `xml:"ResponseMetadata"`
+}
+
+// XMLDescribeListenersResult contains the result of DescribeListeners.
+type XMLDescribeListenersResult struct {
+	Listeners XMLListeners `xml:"Listeners"`
+}
+
+// XMLDescribeListenerAttributesResponse is the XML response for DescribeListenerAttributes.
+type XMLDescribeListenerAttributesResponse struct {
+	XMLName          xml.Name                            `xml:"DescribeListenerAttributesResponse"`
+	Xmlns            string                              `xml:"xmlns,attr"`
+	Result           XMLDescribeListenerAttributesResult `xml:"DescribeListenerAttributesResult"`
+	ResponseMetadata XMLResponseMetadata                 `xml:"ResponseMetadata"`
+}
+
+// XMLDescribeListenerAttributesResult contains the result of DescribeListenerAttributes.
+type XMLDescribeListenerAttributesResult struct {
+	Attributes XMLAttributes `xml:"Attributes"`
+}
+
+// XMLRules contains a list of rules.
+type XMLRules struct {
+	Members []XMLRule `xml:"member"`
+}
+
+// XMLRule represents a rule in XML format.
+type XMLRule struct {
+	RuleArn    string            `xml:"RuleArn"`
+	Priority   string            `xml:"Priority"`
+	IsDefault  bool              `xml:"IsDefault"`
+	Actions    XMLActions        `xml:"Actions"`
+	Conditions XMLRuleConditions `xml:"Conditions"`
+}
+
 // XMLDeleteListenerResponse is the XML response for DeleteListener.
 type XMLDeleteListenerResponse struct {
 	XMLName          xml.Name                `xml:"DeleteListenerResponse"`
@@ -638,9 +776,56 @@ type XMLActions struct {
 
 // XMLAction represents an action in XML format.
 type XMLAction struct {
-	Type           string `xml:"Type"`
-	TargetGroupArn string `xml:"TargetGroupArn,omitempty"`
-	Order          int    `xml:"Order,omitempty"`
+	Type                string                  `xml:"Type"`
+	TargetGroupArn      string                  `xml:"TargetGroupArn,omitempty"`
+	Order               int                     `xml:"Order,omitempty"`
+	ForwardConfig       *XMLForwardConfig       `xml:"ForwardConfig,omitempty"`
+	FixedResponseConfig *XMLFixedResponseConfig `xml:"FixedResponseConfig,omitempty"`
+}
+
+// XMLForwardConfig represents a forward action configuration in XML.
+type XMLForwardConfig struct {
+	TargetGroups XMLTargetGroupTuples `xml:"TargetGroups"`
+}
+
+// XMLTargetGroupTuples contains a list of target group tuples.
+type XMLTargetGroupTuples struct {
+	Members []XMLTargetGroupTuple `xml:"member"`
+}
+
+// XMLTargetGroupTuple represents a target group tuple in XML.
+type XMLTargetGroupTuple struct {
+	TargetGroupArn string `xml:"TargetGroupArn"`
+	Weight         int    `xml:"Weight,omitempty"`
+}
+
+// XMLFixedResponseConfig represents a fixed response action configuration in XML.
+type XMLFixedResponseConfig struct {
+	ContentType string `xml:"ContentType,omitempty"`
+	MessageBody string `xml:"MessageBody,omitempty"`
+	StatusCode  string `xml:"StatusCode,omitempty"`
+}
+
+// XMLRuleConditions contains a list of rule conditions.
+type XMLRuleConditions struct {
+	Members []XMLRuleCondition `xml:"member"`
+}
+
+// XMLRuleCondition represents a rule condition in XML.
+type XMLRuleCondition struct {
+	Field             string                         `xml:"Field"`
+	Values            XMLStringMembers               `xml:"Values,omitempty"`
+	PathPatternConfig *XMLPathPatternConditionConfig `xml:"PathPatternConfig,omitempty"`
+}
+
+// XMLPathPatternConditionConfig represents a path pattern condition config in XML.
+type XMLPathPatternConditionConfig struct {
+	Values XMLStringMembers `xml:"Values"`
+}
+
+// XMLStringMembers contains a list of string members.
+type XMLStringMembers struct {
+	Members []string `xml:"member"`
 }
 
 // XMLResponseMetadata contains response metadata.
