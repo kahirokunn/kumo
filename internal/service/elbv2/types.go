@@ -22,6 +22,7 @@ type LoadBalancer struct {
 	AvailabilityZones     []AvailabilityZone
 	SecurityGroups        []string
 	IPAddressType         string
+	Tags                  []Tag
 }
 
 // LoadBalancerState represents the state of a load balancer.
@@ -60,6 +61,7 @@ type TargetGroup struct {
 	UnhealthyThresholdCount    int
 	TargetType                 string // instance | ip | lambda | alb
 	LoadBalancerArns           []string
+	Tags                       []Tag
 }
 
 // Listener represents an ELB listener.
@@ -91,6 +93,18 @@ type TargetDescription struct {
 	HealthState string
 }
 
+// Tag represents a resource tag.
+type Tag struct {
+	Key   string `json:"Key"`
+	Value string `json:"Value"`
+}
+
+// TagDescription represents tags attached to a resource.
+type TagDescription struct {
+	ResourceArn string
+	Tags        []Tag
+}
+
 // Request types.
 
 // CreateLoadBalancerRequest represents a CreateLoadBalancer request.
@@ -101,6 +115,7 @@ type CreateLoadBalancerRequest struct {
 	Scheme         string   `json:"Scheme,omitempty"`
 	Type           string   `json:"Type,omitempty"`
 	IPAddressType  string   `json:"IpAddressType,omitempty"`
+	Tags           []Tag    `json:"Tags,omitempty"`
 }
 
 // DeleteLoadBalancerRequest represents a DeleteLoadBalancer request.
@@ -129,6 +144,7 @@ type CreateTargetGroupRequest struct {
 	HealthyThresholdCount      int    `json:"HealthyThresholdCount,omitempty"`
 	UnhealthyThresholdCount    int    `json:"UnhealthyThresholdCount,omitempty"`
 	TargetType                 string `json:"TargetType,omitempty"`
+	Tags                       []Tag `json:"Tags,omitempty"`
 }
 
 // DeleteTargetGroupRequest represents a DeleteTargetGroup request.
@@ -166,6 +182,23 @@ type CreateListenerRequest struct {
 // DeleteListenerRequest represents a DeleteListener request.
 type DeleteListenerRequest struct {
 	ListenerArn string `json:"ListenerArn"`
+}
+
+// DescribeTagsRequest represents a DescribeTags request.
+type DescribeTagsRequest struct {
+	ResourceArns []string `json:"ResourceArns,omitempty"`
+}
+
+// AddTagsRequest represents an AddTags request.
+type AddTagsRequest struct {
+	ResourceArns []string `json:"ResourceArns,omitempty"`
+	Tags         []Tag    `json:"Tags,omitempty"`
+}
+
+// RemoveTagsRequest represents a RemoveTags request.
+type RemoveTagsRequest struct {
+	ResourceArns []string `json:"ResourceArns,omitempty"`
+	TagKeys      []string `json:"TagKeys,omitempty"`
 }
 
 // XML Response types.
@@ -361,6 +394,63 @@ type XMLDeleteListenerResponse struct {
 
 // XMLDeleteListenerResult is an empty result for DeleteListener.
 type XMLDeleteListenerResult struct{}
+
+// XMLDescribeTagsResponse is the XML response for DescribeTags.
+type XMLDescribeTagsResponse struct {
+	XMLName          xml.Name              `xml:"DescribeTagsResponse"`
+	Xmlns            string                `xml:"xmlns,attr"`
+	Result           XMLDescribeTagsResult `xml:"DescribeTagsResult"`
+	ResponseMetadata XMLResponseMetadata   `xml:"ResponseMetadata"`
+}
+
+// XMLDescribeTagsResult contains the result of DescribeTags.
+type XMLDescribeTagsResult struct {
+	TagDescriptions XMLTagDescriptions `xml:"TagDescriptions"`
+}
+
+// XMLTagDescriptions contains a list of resource tag descriptions.
+type XMLTagDescriptions struct {
+	Members []XMLTagDescription `xml:"member"`
+}
+
+// XMLTagDescription represents a resource's tags in XML format.
+type XMLTagDescription struct {
+	ResourceArn string  `xml:"ResourceArn"`
+	Tags        XMLTags `xml:"Tags"`
+}
+
+// XMLTags contains a list of tags.
+type XMLTags struct {
+	Members []XMLTag `xml:"member"`
+}
+
+// XMLTag represents a tag in XML format.
+type XMLTag struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value"`
+}
+
+// XMLAddTagsResponse is the XML response for AddTags.
+type XMLAddTagsResponse struct {
+	XMLName          xml.Name            `xml:"AddTagsResponse"`
+	Xmlns            string              `xml:"xmlns,attr"`
+	Result           XMLAddTagsResult    `xml:"AddTagsResult"`
+	ResponseMetadata XMLResponseMetadata `xml:"ResponseMetadata"`
+}
+
+// XMLAddTagsResult is an empty result for AddTags.
+type XMLAddTagsResult struct{}
+
+// XMLRemoveTagsResponse is the XML response for RemoveTags.
+type XMLRemoveTagsResponse struct {
+	XMLName          xml.Name            `xml:"RemoveTagsResponse"`
+	Xmlns            string              `xml:"xmlns,attr"`
+	Result           XMLRemoveTagsResult `xml:"RemoveTagsResult"`
+	ResponseMetadata XMLResponseMetadata `xml:"ResponseMetadata"`
+}
+
+// XMLRemoveTagsResult is an empty result for RemoveTags.
+type XMLRemoveTagsResult struct{}
 
 // XMLListeners contains a list of listeners.
 type XMLListeners struct {

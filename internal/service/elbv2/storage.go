@@ -23,6 +23,9 @@ type Storage interface {
 	CreateLoadBalancer(ctx context.Context, req *CreateLoadBalancerRequest) (*LoadBalancer, error)
 	DeleteLoadBalancer(ctx context.Context, loadBalancerArn string) error
 	DescribeLoadBalancers(ctx context.Context, arns, names []string) ([]*LoadBalancer, error)
+	DescribeTags(ctx context.Context, resourceArns []string) ([]*TagDescription, error)
+	AddTags(ctx context.Context, resourceArns []string, tags []Tag) error
+	RemoveTags(ctx context.Context, resourceArns []string, tagKeys []string) error
 
 	CreateTargetGroup(ctx context.Context, req *CreateTargetGroupRequest) (*TargetGroup, error)
 	DeleteTargetGroup(ctx context.Context, targetGroupArn string) error
@@ -228,6 +231,7 @@ func (m *MemoryStorage) buildLoadBalancer(req *CreateLoadBalancerRequest, defaul
 		AvailabilityZones:     azs,
 		SecurityGroups:        req.SecurityGroups,
 		IPAddressType:         defaults.ipAddressType,
+		Tags:                  append([]Tag(nil), req.Tags...),
 	}
 }
 
@@ -296,6 +300,69 @@ func (m *MemoryStorage) DescribeLoadBalancers(_ context.Context, arns, names []s
 	}
 
 	return result, nil
+}
+
+// DescribeTags describes tags for ELBv2 resources.
+func (m *MemoryStorage) DescribeTags(_ context.Context, resourceArns []string) ([]*TagDescription, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	descriptions := make([]*TagDescription, 0, len(resourceArns))
+	for _, resourceArn := range resourceArns {
+		tags, ok := m.getResourceTagsLocked(resourceArn)
+		if !ok {
+			continue
+		}
+
+		descriptions = append(descriptions, &TagDescription{
+			ResourceArn: resourceArn,
+			Tags:        append([]Tag(nil), tags...),
+		})
+	}
+
+	return descriptions, nil
+}
+
+// AddTags adds or updates tags for ELBv2 resources.
+func (m *MemoryStorage) AddTags(_ context.Context, resourceArns []string, tags []Tag) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, resourceArn := range resourceArns {
+		resourceTags, ok := m.getMutableResourceTagsLocked(resourceArn)
+		if !ok {
+			return &Error{
+				Code:    "LoadBalancerNotFound",
+				Message: fmt.Sprintf("Resource '%s' not found", resourceArn),
+			}
+		}
+
+		for _, tag := range tags {
+			upsertTag(resourceTags, tag)
+		}
+	}
+
+	return nil
+}
+
+// RemoveTags removes tags from ELBv2 resources.
+func (m *MemoryStorage) RemoveTags(_ context.Context, resourceArns []string, tagKeys []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, resourceArn := range resourceArns {
+		resourceTags, ok := m.getMutableResourceTagsLocked(resourceArn)
+		if !ok {
+			return &Error{
+				Code:    "LoadBalancerNotFound",
+				Message: fmt.Sprintf("Resource '%s' not found", resourceArn),
+			}
+		}
+
+		removeTags(resourceTags, tagKeys)
+	}
+
+	return nil
 }
 
 // targetGroupDefaults holds default values for target group creation.
@@ -414,6 +481,7 @@ func (m *MemoryStorage) buildTargetGroup(req *CreateTargetGroupRequest, defaults
 		UnhealthyThresholdCount:    defaults.unhealthyThreshold,
 		TargetType:                 defaults.targetType,
 		LoadBalancerArns:           []string{},
+		Tags:                       append([]Tag(nil), req.Tags...),
 	}
 }
 
@@ -609,4 +677,58 @@ func (m *MemoryStorage) DeleteListener(_ context.Context, listenerArn string) er
 	delete(m.Listeners, listenerArn)
 
 	return nil
+}
+
+func (m *MemoryStorage) getResourceTagsLocked(resourceArn string) ([]Tag, bool) {
+	if lb, ok := m.LoadBalancers[resourceArn]; ok {
+		return lb.Tags, true
+	}
+
+	if tg, ok := m.TargetGroups[resourceArn]; ok {
+		return tg.Tags, true
+	}
+
+	return nil, false
+}
+
+func (m *MemoryStorage) getMutableResourceTagsLocked(resourceArn string) (*[]Tag, bool) {
+	if lb, ok := m.LoadBalancers[resourceArn]; ok {
+		return &lb.Tags, true
+	}
+
+	if tg, ok := m.TargetGroups[resourceArn]; ok {
+		return &tg.Tags, true
+	}
+
+	return nil, false
+}
+
+func upsertTag(tags *[]Tag, tag Tag) {
+	for i := range *tags {
+		if (*tags)[i].Key == tag.Key {
+			(*tags)[i].Value = tag.Value
+
+			return
+		}
+	}
+
+	*tags = append(*tags, tag)
+}
+
+func removeTags(tags *[]Tag, tagKeys []string) {
+	removeSet := make(map[string]struct{}, len(tagKeys))
+	for _, tagKey := range tagKeys {
+		removeSet[tagKey] = struct{}{}
+	}
+
+	filteredTags := (*tags)[:0]
+	for _, tag := range *tags {
+		if _, ok := removeSet[tag.Key]; ok {
+			continue
+		}
+
+		filteredTags = append(filteredTags, tag)
+	}
+
+	*tags = filteredTags
 }

@@ -99,6 +99,88 @@ func TestELBv2_DescribeLoadBalancers(t *testing.T) {
 	golden.New(t, golden.WithIgnoreFields("LoadBalancerArn", "DNSName", "CanonicalHostedZoneId", "CreatedTime", "VpcId", "ResultMetadata")).Assert(t.Name()+"_describe", descResult)
 }
 
+func TestELBv2_TagOperations(t *testing.T) {
+	client := newELBv2Client(t)
+	ctx := t.Context()
+	lbName := "test-tags-lb"
+
+	createResult, err := client.CreateLoadBalancer(ctx, &elasticloadbalancingv2.CreateLoadBalancerInput{
+		Name:    aws.String(lbName),
+		Subnets: []string{"subnet-12345678"},
+		Tags: []types.Tag{
+			{Key: aws.String("env"), Value: aws.String("test")},
+			{Key: aws.String("owner"), Value: aws.String("kumo")},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lbArn := createResult.LoadBalancers[0].LoadBalancerArn
+
+	t.Cleanup(func() {
+		_, _ = client.DeleteLoadBalancer(context.Background(), &elasticloadbalancingv2.DeleteLoadBalancerInput{
+			LoadBalancerArn: lbArn,
+		})
+	})
+
+	describeResult, err := client.DescribeTags(ctx, &elasticloadbalancingv2.DescribeTagsInput{
+		ResourceArns: []string{aws.ToString(lbArn)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertELBv2Tags(t, describeResult.TagDescriptions, aws.ToString(lbArn), map[string]string{
+		"env":   "test",
+		"owner": "kumo",
+	})
+
+	_, err = client.AddTags(ctx, &elasticloadbalancingv2.AddTagsInput{
+		ResourceArns: []string{aws.ToString(lbArn)},
+		Tags: []types.Tag{
+			{Key: aws.String("owner"), Value: aws.String("platform")},
+			{Key: aws.String("team"), Value: aws.String("agent")},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	describeAfterAddResult, err := client.DescribeTags(ctx, &elasticloadbalancingv2.DescribeTagsInput{
+		ResourceArns: []string{aws.ToString(lbArn)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertELBv2Tags(t, describeAfterAddResult.TagDescriptions, aws.ToString(lbArn), map[string]string{
+		"env":   "test",
+		"owner": "platform",
+		"team":  "agent",
+	})
+
+	_, err = client.RemoveTags(ctx, &elasticloadbalancingv2.RemoveTagsInput{
+		ResourceArns: []string{aws.ToString(lbArn)},
+		TagKeys:      []string{"env"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	describeAfterRemoveResult, err := client.DescribeTags(ctx, &elasticloadbalancingv2.DescribeTagsInput{
+		ResourceArns: []string{aws.ToString(lbArn)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertELBv2Tags(t, describeAfterRemoveResult.TagDescriptions, aws.ToString(lbArn), map[string]string{
+		"owner": "platform",
+		"team":  "agent",
+	})
+}
+
 func TestELBv2_CreateAndDeleteTargetGroup(t *testing.T) {
 	client := newELBv2Client(t)
 	ctx := t.Context()
@@ -132,6 +214,30 @@ func TestELBv2_CreateAndDeleteTargetGroup(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func assertELBv2Tags(t *testing.T, descriptions []types.TagDescription, expectedResourceArn string, expectedTags map[string]string) {
+	t.Helper()
+
+	if len(descriptions) != 1 {
+		t.Fatalf("unexpected tag description count: got %d want 1", len(descriptions))
+	}
+
+	description := descriptions[0]
+	if aws.ToString(description.ResourceArn) != expectedResourceArn {
+		t.Fatalf("unexpected resource ARN: got %q want %q", aws.ToString(description.ResourceArn), expectedResourceArn)
+	}
+
+	if len(description.Tags) != len(expectedTags) {
+		t.Fatalf("unexpected tag count: got %d want %d", len(description.Tags), len(expectedTags))
+	}
+
+	for _, tag := range description.Tags {
+		key := aws.ToString(tag.Key)
+		if value, ok := expectedTags[key]; !ok || aws.ToString(tag.Value) != value {
+			t.Fatalf("unexpected tag: got %q=%q", key, aws.ToString(tag.Value))
+		}
 	}
 }
 
@@ -169,6 +275,127 @@ func TestELBv2_DescribeTargetGroups(t *testing.T) {
 	}
 
 	golden.New(t, golden.WithIgnoreFields("TargetGroupArn", "LoadBalancerArns", "ResultMetadata")).Assert(t.Name()+"_describe", descResult)
+}
+
+func TestELBv2_DescribeTags(t *testing.T) {
+	client := newELBv2Client(t)
+	ctx := t.Context()
+
+	createResult, err := client.CreateLoadBalancer(ctx, &elasticloadbalancingv2.CreateLoadBalancerInput{
+		Name:    aws.String("test-describe-tags-lb"),
+		Subnets: []string{"subnet-12345678", "subnet-87654321"},
+		Tags: []types.Tag{
+			{Key: aws.String("Environment"), Value: aws.String("test")},
+			{Key: aws.String("Team"), Value: aws.String("platform")},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lbArn := createResult.LoadBalancers[0].LoadBalancerArn
+	t.Cleanup(func() {
+		_, _ = client.DeleteLoadBalancer(context.Background(), &elasticloadbalancingv2.DeleteLoadBalancerInput{
+			LoadBalancerArn: lbArn,
+		})
+	})
+
+	describeResult, err := client.DescribeTags(ctx, &elasticloadbalancingv2.DescribeTagsInput{
+		ResourceArns: []string{aws.ToString(lbArn)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(describeResult.TagDescriptions) != 1 {
+		t.Fatalf("unexpected tag description count: got %d want 1", len(describeResult.TagDescriptions))
+	}
+
+	tagDescription := describeResult.TagDescriptions[0]
+	if aws.ToString(tagDescription.ResourceArn) != aws.ToString(lbArn) {
+		t.Fatalf("unexpected resource ARN: got %q want %q", aws.ToString(tagDescription.ResourceArn), aws.ToString(lbArn))
+	}
+
+	expectedTags := map[string]string{
+		"Environment": "test",
+		"Team":        "platform",
+	}
+	if len(tagDescription.Tags) != len(expectedTags) {
+		t.Fatalf("unexpected tag count: got %d want %d", len(tagDescription.Tags), len(expectedTags))
+	}
+
+	for _, tag := range tagDescription.Tags {
+		key := aws.ToString(tag.Key)
+		value := aws.ToString(tag.Value)
+		if expectedValue, ok := expectedTags[key]; !ok || value != expectedValue {
+			t.Fatalf("unexpected tag: %q=%q", key, value)
+		}
+	}
+}
+
+func TestELBv2_AddAndRemoveTags(t *testing.T) {
+	client := newELBv2Client(t)
+	ctx := t.Context()
+
+	createResult, err := client.CreateTargetGroup(ctx, &elasticloadbalancingv2.CreateTargetGroupInput{
+		Name:       aws.String("test-add-remove-tags-tg"),
+		Protocol:   types.ProtocolEnumHttp,
+		Port:       aws.Int32(80),
+		VpcId:      aws.String("vpc-12345678"),
+		TargetType: types.TargetTypeEnumIp,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tgArn := createResult.TargetGroups[0].TargetGroupArn
+	t.Cleanup(func() {
+		_, _ = client.DeleteTargetGroup(context.Background(), &elasticloadbalancingv2.DeleteTargetGroupInput{
+			TargetGroupArn: tgArn,
+		})
+	})
+
+	_, err = client.AddTags(ctx, &elasticloadbalancingv2.AddTagsInput{
+		ResourceArns: []string{aws.ToString(tgArn)},
+		Tags: []types.Tag{
+			{Key: aws.String("Environment"), Value: aws.String("test")},
+			{Key: aws.String("Service"), Value: aws.String("nginx")},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	describeAfterAdd, err := client.DescribeTags(ctx, &elasticloadbalancingv2.DescribeTagsInput{
+		ResourceArns: []string{aws.ToString(tgArn)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertELBv2Tags(t, describeAfterAdd.TagDescriptions, aws.ToString(tgArn), map[string]string{
+		"Environment": "test",
+		"Service":     "nginx",
+	})
+
+	_, err = client.RemoveTags(ctx, &elasticloadbalancingv2.RemoveTagsInput{
+		ResourceArns: []string{aws.ToString(tgArn)},
+		TagKeys:      []string{"Environment"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	describeAfterRemove, err := client.DescribeTags(ctx, &elasticloadbalancingv2.DescribeTagsInput{
+		ResourceArns: []string{aws.ToString(tgArn)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	assertELBv2Tags(t, describeAfterRemove.TagDescriptions, aws.ToString(tgArn), map[string]string{
+		"Service": "nginx",
+	})
 }
 
 func TestELBv2_RegisterAndDeregisterTargets(t *testing.T) {
@@ -219,6 +446,7 @@ func TestELBv2_RegisterAndDeregisterTargets(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
 
 func TestELBv2_CreateAndDeleteListener(t *testing.T) {
 	client := newELBv2Client(t)
@@ -288,6 +516,7 @@ func TestELBv2_CreateAndDeleteListener(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
 
 func TestELBv2_LoadBalancerWithTargetGroupAndListener(t *testing.T) {
 	client := newELBv2Client(t)
