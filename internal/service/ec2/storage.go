@@ -1016,7 +1016,7 @@ func (m *MemoryStorage) resolveSecurityGroups(groupIDs, groupNames []string) []G
 
 // generateID generates a random ID.
 func generateID() string {
-	return uuid.New().String()[:17]
+	return strings.ReplaceAll(uuid.New().String(), "-", "")[:17]
 }
 
 // generatePrivateIP generates a random private IP address.

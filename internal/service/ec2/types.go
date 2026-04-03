@@ -148,6 +148,13 @@ type AuthorizeSecurityGroupIngressRequest struct {
 	IPPermissions []IPPermission `json:"IPPermissions"`
 }
 
+// RevokeSecurityGroupIngressRequest represents a RevokeSecurityGroupIngress request.
+type RevokeSecurityGroupIngressRequest struct {
+	GroupID       string         `json:"GroupId,omitempty"`
+	GroupName     string         `json:"GroupName,omitempty"`
+	IPPermissions []IPPermission `json:"IPPermissions"`
+}
+
 // AuthorizeSecurityGroupEgressRequest represents an AuthorizeSecurityGroupEgress request.
 type AuthorizeSecurityGroupEgressRequest struct {
 	GroupID       string         `json:"GroupId"`
@@ -377,6 +384,14 @@ type XMLSecurityGroup struct {
 // XMLAuthorizeSecurityGroupIngressResponse is the XML response for AuthorizeSecurityGroupIngress.
 type XMLAuthorizeSecurityGroupIngressResponse struct {
 	XMLName   xml.Name `xml:"AuthorizeSecurityGroupIngressResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
+}
+
+// XMLRevokeSecurityGroupIngressResponse is the XML response for RevokeSecurityGroupIngress.
+type XMLRevokeSecurityGroupIngressResponse struct {
+	XMLName   xml.Name `xml:"RevokeSecurityGroupIngressResponse"`
 	Xmlns     string   `xml:"xmlns,attr"`
 	RequestID string   `xml:"requestId"`
 	Return    bool     `xml:"return"`
