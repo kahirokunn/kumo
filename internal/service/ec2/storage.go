@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -69,6 +70,7 @@ type Storage interface {
 	// Security Group operations
 	CreateSecurityGroup(ctx context.Context, req *CreateSecurityGroupRequest) (*SecurityGroup, error)
 	DeleteSecurityGroup(ctx context.Context, groupID, groupName string) error
+	DescribeSecurityGroups(ctx context.Context, groupIDs, groupNames []string, filters []Filter) ([]*SecurityGroup, error)
 	AuthorizeSecurityGroupIngress(ctx context.Context, groupID, groupName string, permissions []IPPermission) error
 	AuthorizeSecurityGroupEgress(ctx context.Context, groupID string, permissions []IPPermission) error
 
@@ -429,9 +431,11 @@ func (m *MemoryStorage) CreateSecurityGroup(_ context.Context, req *CreateSecuri
 		GroupID:      "sg-" + generateID(),
 		GroupName:    req.GroupName,
 		Description:  req.GroupDescription,
+		OwnerID:      defaultAccountID,
 		VpcID:        req.VpcID,
 		IngressRules: []IPPermission{},
 		EgressRules:  []IPPermission{},
+		Tags:         tagsForResourceType(req.TagSpecifications, "security-group"),
 	}
 
 	m.SecurityGroups[sg.GroupID] = sg
@@ -471,6 +475,57 @@ func (m *MemoryStorage) DeleteSecurityGroup(_ context.Context, groupID, groupNam
 	}
 }
 
+// DescribeSecurityGroups describes security groups.
+func (m *MemoryStorage) DescribeSecurityGroups(_ context.Context, groupIDs, groupNames []string, filters []Filter) ([]*SecurityGroup, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if len(groupIDs) == 0 && len(groupNames) == 0 {
+		groups := make([]*SecurityGroup, 0, len(m.SecurityGroups))
+		for _, sg := range m.SecurityGroups {
+			if m.matchSecurityGroupFilters(sg, filters) {
+				groups = append(groups, sg)
+			}
+		}
+
+		return groups, nil
+	}
+
+	groupSet := make(map[string]*SecurityGroup)
+	for _, groupID := range groupIDs {
+		sg, exists := m.SecurityGroups[groupID]
+		if !exists {
+			return nil, &Error{
+				Code:    "InvalidGroup.NotFound",
+				Message: fmt.Sprintf("The security group '%s' does not exist", groupID),
+			}
+		}
+
+		groupSet[groupID] = sg
+	}
+
+	for _, groupName := range groupNames {
+		sg := m.findSecurityGroup("", groupName)
+		if sg == nil {
+			return nil, &Error{
+				Code:    "InvalidGroup.NotFound",
+				Message: fmt.Sprintf("The security group '%s' does not exist", groupName),
+			}
+		}
+
+		groupSet[sg.GroupID] = sg
+	}
+
+	groups := make([]*SecurityGroup, 0, len(groupSet))
+	for _, sg := range groupSet {
+		if m.matchSecurityGroupFilters(sg, filters) {
+			groups = append(groups, sg)
+		}
+	}
+
+	return groups, nil
+}
+
 // AuthorizeSecurityGroupIngress adds ingress rules to a security group.
 func (m *MemoryStorage) AuthorizeSecurityGroupIngress(_ context.Context, groupID, groupName string, permissions []IPPermission) error {
 	m.mu.Lock()
@@ -487,6 +542,79 @@ func (m *MemoryStorage) AuthorizeSecurityGroupIngress(_ context.Context, groupID
 	sg.IngressRules = append(sg.IngressRules, permissions...)
 
 	return nil
+}
+
+
+
+func (m *MemoryStorage) matchSecurityGroupFilters(sg *SecurityGroup, filters []Filter) bool {
+	if len(filters) == 0 {
+		return true
+	}
+
+	for _, filter := range filters {
+		switch {
+		case filter.Name == "group-id":
+			if !containsString(filter.Values, sg.GroupID) {
+				return false
+			}
+		case filter.Name == "group-name":
+			if !containsString(filter.Values, sg.GroupName) {
+				return false
+			}
+		case filter.Name == "vpc-id":
+			if !containsString(filter.Values, sg.VpcID) {
+				return false
+			}
+		case filter.Name == "tag-key":
+			if !containsAnyTagKey(sg.Tags, filter.Values) {
+				return false
+			}
+		case strings.HasPrefix(filter.Name, "tag:"):
+			tagKey := strings.TrimPrefix(filter.Name, "tag:")
+			if !matchTagFilter(sg.Tags, tagKey, filter.Values) {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+
+func tagsForResourceType(specs []TagSpecification, resourceType string) []Tag {
+	for _, spec := range specs {
+		if spec.ResourceType == resourceType {
+			tags := make([]Tag, 0, len(spec.Tags))
+			tags = append(tags, spec.Tags...)
+
+			return tags
+		}
+	}
+
+	return nil
+}
+
+
+
+
+func containsAnyTagKey(tags []Tag, keys []string) bool {
+	for _, tag := range tags {
+		if containsString(keys, tag.Key) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func matchTagFilter(tags []Tag, key string, values []string) bool {
+	for _, tag := range tags {
+		if tag.Key == key && containsString(values, tag.Value) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // AuthorizeSecurityGroupEgress adds egress rules to a security group.

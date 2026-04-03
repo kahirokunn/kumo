@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -191,6 +194,9 @@ func (s *Service) CreateSecurityGroup(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
+	if tagSpecifications := parseTagSpecificationsFromForm(r.Form, "TagSpecification"); len(tagSpecifications) > 0 {
+		req.TagSpecifications = tagSpecifications
+	}
 
 	if req.GroupName == "" {
 		writeError(w, errInvalidParameter, "GroupName is required", http.StatusBadRequest)
@@ -248,6 +254,37 @@ func (s *Service) DeleteSecurityGroup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// DescribeSecurityGroups handles the DescribeSecurityGroups action.
+func (s *Service) DescribeSecurityGroups(w http.ResponseWriter, r *http.Request) {
+	var req DescribeSecurityGroupsRequest
+	if err := readEC2JSONRequest(r, &req); err != nil {
+		writeError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+	if filters := parseFiltersFromForm(r.Form, "Filter"); len(filters) > 0 {
+		req.Filters = filters
+	}
+
+	securityGroups, err := s.storage.DescribeSecurityGroups(r.Context(), req.GroupIDs, req.GroupNames, req.Filters)
+	if err != nil {
+		handleError(w, err)
+
+		return
+	}
+
+	xmlSecurityGroups := make([]XMLSecurityGroup, 0, len(securityGroups))
+	for _, securityGroup := range securityGroups {
+		xmlSecurityGroups = append(xmlSecurityGroups, convertToXMLSecurityGroup(securityGroup))
+	}
+
+	writeEC2XMLResponse(w, XMLDescribeSecurityGroupsResponse{
+		Xmlns:             ec2XMLNS,
+		RequestID:         uuid.New().String(),
+		SecurityGroupInfo: XMLSecurityGroupSet{Items: xmlSecurityGroups},
+	})
+}
+
 // AuthorizeSecurityGroupIngress handles the AuthorizeSecurityGroupIngress action.
 func (s *Service) AuthorizeSecurityGroupIngress(w http.ResponseWriter, r *http.Request) {
 	var req AuthorizeSecurityGroupIngressRequest
@@ -255,6 +292,9 @@ func (s *Service) AuthorizeSecurityGroupIngress(w http.ResponseWriter, r *http.R
 		writeError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
 
 		return
+	}
+	if permissions := parseIPPermissionsFromForm(r.Form, "IpPermissions"); len(permissions) > 0 {
+		req.IPPermissions = permissions
 	}
 
 	if req.GroupID == "" && req.GroupName == "" {
@@ -284,6 +324,9 @@ func (s *Service) AuthorizeSecurityGroupEgress(w http.ResponseWriter, r *http.Re
 		writeError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
 
 		return
+	}
+	if permissions := parseIPPermissionsFromForm(r.Form, "IpPermissions"); len(permissions) > 0 {
+		req.IPPermissions = permissions
 	}
 
 	if req.GroupID == "" {
@@ -869,6 +912,7 @@ func (s *Service) getActionHandler(action string) func(http.ResponseWriter, *htt
 		// Security group operations
 		"CreateSecurityGroup":           s.CreateSecurityGroup,
 		"DeleteSecurityGroup":           s.DeleteSecurityGroup,
+		"DescribeSecurityGroups":        s.DescribeSecurityGroups,
 		"AuthorizeSecurityGroupIngress": s.AuthorizeSecurityGroupIngress,
 		"AuthorizeSecurityGroupEgress":  s.AuthorizeSecurityGroupEgress,
 		// Key pair operations
@@ -932,6 +976,255 @@ func convertToXMLInstanceStateChangeSet(changes []InstanceStateChange) XMLInstan
 	}
 
 	return XMLInstanceStateChangeSet{Items: items}
+}
+
+func convertToXMLSecurityGroup(group *SecurityGroup) XMLSecurityGroup {
+	tags := make([]XMLTag, 0, len(group.Tags))
+	for _, tag := range group.Tags {
+		tags = append(tags, XMLTag(tag))
+	}
+
+	return XMLSecurityGroup{
+		GroupID:          group.GroupID,
+		GroupName:        group.GroupName,
+		GroupDescription: group.Description,
+		OwnerID:          group.OwnerID,
+		VpcID:            group.VpcID,
+		IPPermissions:    convertToXMLIPPermissionSet(group.IngressRules),
+		IPPermissionsEgr: convertToXMLIPPermissionSet(group.EgressRules),
+		TagSet:           XMLTagSet{Items: tags},
+	}
+}
+
+func convertToXMLIPPermissionSet(permissions []IPPermission) XMLIPPermissionSet {
+	items := make([]XMLIPPermission, 0, len(permissions))
+	for _, permission := range permissions {
+		ipRanges := make([]XMLIPRange, 0, len(permission.IPRanges))
+		for _, ipRange := range permission.IPRanges {
+			ipRanges = append(ipRanges, XMLIPRange(ipRange))
+		}
+
+		groups := make([]XMLUserIDGroupPair, 0, len(permission.Groups))
+		for _, group := range permission.Groups {
+			groups = append(groups, XMLUserIDGroupPair{
+				GroupID:     group.GroupID,
+				GroupName:   group.GroupName,
+				UserID:      group.UserID,
+				VpcID:       group.VpcID,
+				Description: group.Description,
+			})
+		}
+
+		items = append(items, XMLIPPermission{
+			IPProtocol: permission.IPProtocol,
+			FromPort:   permission.FromPort,
+			ToPort:     permission.ToPort,
+			IPRanges:   XMLIPRangeSet{Items: ipRanges},
+			Groups:     XMLGroupPairSet{Items: groups},
+		})
+	}
+
+	return XMLIPPermissionSet{Items: items}
+}
+
+func parseFiltersFromForm(form url.Values, prefix string) []Filter {
+	indices := collectFormIndices(form, prefix)
+	filters := make([]Filter, 0, len(indices))
+	for _, idx := range indices {
+		name := form.Get(fmt.Sprintf("%s.%d.Name", prefix, idx))
+		values := collectIndexedFormValues(form, fmt.Sprintf("%s.%d.Value", prefix, idx))
+		if name == "" && len(values) == 0 {
+			continue
+		}
+
+		filters = append(filters, Filter{
+			Name:   name,
+			Values: values,
+		})
+	}
+
+	return filters
+}
+
+func parseTagSpecificationsFromForm(form url.Values, prefix string) []TagSpecification {
+	indices := collectFormIndices(form, prefix)
+	specs := make([]TagSpecification, 0, len(indices))
+	for _, idx := range indices {
+		resourceType := form.Get(fmt.Sprintf("%s.%d.ResourceType", prefix, idx))
+		tags := parseTagsFromForm(form, fmt.Sprintf("%s.%d.Tag", prefix, idx))
+		if resourceType == "" && len(tags) == 0 {
+			continue
+		}
+
+		specs = append(specs, TagSpecification{
+			ResourceType: resourceType,
+			Tags:         tags,
+		})
+	}
+
+	return specs
+}
+
+func parseTagsFromForm(form url.Values, prefix string) []Tag {
+	indices := collectFormIndices(form, prefix)
+	tags := make([]Tag, 0, len(indices))
+	for _, idx := range indices {
+		key := form.Get(fmt.Sprintf("%s.%d.Key", prefix, idx))
+		value := form.Get(fmt.Sprintf("%s.%d.Value", prefix, idx))
+		if key == "" && value == "" {
+			continue
+		}
+
+		tags = append(tags, Tag{
+			Key:   key,
+			Value: value,
+		})
+	}
+
+	return tags
+}
+
+func parseIPPermissionsFromForm(form url.Values, prefix string) []IPPermission {
+	indices := collectFormIndices(form, prefix)
+	permissions := make([]IPPermission, 0, len(indices))
+	for _, idx := range indices {
+		permissionPrefix := fmt.Sprintf("%s.%d", prefix, idx)
+		ipProtocol := form.Get(permissionPrefix + ".IpProtocol")
+		fromPort := parseIntFormValue(form.Get(permissionPrefix + ".FromPort"))
+		toPort := parseIntFormValue(form.Get(permissionPrefix + ".ToPort"))
+		ipRanges := parseIPRangesFromForm(form, permissionPrefix+".IpRanges")
+		groups := parseUserIDGroupPairsFromForm(form, permissionPrefix+".Groups")
+		if ipProtocol == "" && fromPort == 0 && toPort == 0 && len(ipRanges) == 0 && len(groups) == 0 {
+			continue
+		}
+
+		permissions = append(permissions, IPPermission{
+			IPProtocol: ipProtocol,
+			FromPort:   fromPort,
+			ToPort:     toPort,
+			IPRanges:   ipRanges,
+			Groups:     groups,
+		})
+	}
+
+	return permissions
+}
+
+func parseIPRangesFromForm(form url.Values, prefix string) []IPRange {
+	indices := collectFormIndices(form, prefix)
+	ipRanges := make([]IPRange, 0, len(indices))
+	for _, idx := range indices {
+		cidrIP := form.Get(fmt.Sprintf("%s.%d.CidrIp", prefix, idx))
+		description := form.Get(fmt.Sprintf("%s.%d.Description", prefix, idx))
+		if cidrIP == "" && description == "" {
+			continue
+		}
+
+		ipRanges = append(ipRanges, IPRange{
+			CidrIP:      cidrIP,
+			Description: description,
+		})
+	}
+
+	return ipRanges
+}
+
+func parseUserIDGroupPairsFromForm(form url.Values, prefix string) []UserIDGroupPair {
+	indices := collectFormIndices(form, prefix)
+	groups := make([]UserIDGroupPair, 0, len(indices))
+	for _, idx := range indices {
+		group := UserIDGroupPair{
+			GroupID:     form.Get(fmt.Sprintf("%s.%d.GroupId", prefix, idx)),
+			GroupName:   form.Get(fmt.Sprintf("%s.%d.GroupName", prefix, idx)),
+			UserID:      form.Get(fmt.Sprintf("%s.%d.UserId", prefix, idx)),
+			VpcID:       form.Get(fmt.Sprintf("%s.%d.VpcId", prefix, idx)),
+			Description: form.Get(fmt.Sprintf("%s.%d.Description", prefix, idx)),
+		}
+		if group.GroupID == "" && group.GroupName == "" && group.UserID == "" && group.VpcID == "" && group.Description == "" {
+			continue
+		}
+
+		groups = append(groups, group)
+	}
+
+	return groups
+}
+
+func collectFormIndices(form url.Values, prefix string) []int {
+	indexSet := make(map[int]struct{})
+	prefix += "."
+	for key := range form {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+
+		remainder := strings.TrimPrefix(key, prefix)
+		head, _, _ := strings.Cut(remainder, ".")
+		idx, err := strconv.Atoi(head)
+		if err != nil {
+			continue
+		}
+
+		indexSet[idx] = struct{}{}
+	}
+
+	indices := make([]int, 0, len(indexSet))
+	for idx := range indexSet {
+		indices = append(indices, idx)
+	}
+	sort.Ints(indices)
+
+	return indices
+}
+
+func collectIndexedFormValues(form url.Values, prefix string) []string {
+	type indexedValue struct {
+		index int
+		value string
+	}
+
+	valuesWithIndex := make([]indexedValue, 0)
+	prefix += "."
+	for key, values := range form {
+		if !strings.HasPrefix(key, prefix) || len(values) == 0 {
+			continue
+		}
+
+		remainder := strings.TrimPrefix(key, prefix)
+		idx, err := strconv.Atoi(remainder)
+		if err != nil {
+			continue
+		}
+
+		valuesWithIndex = append(valuesWithIndex, indexedValue{
+			index: idx,
+			value: values[0],
+		})
+	}
+
+	sort.Slice(valuesWithIndex, func(i, j int) bool {
+		return valuesWithIndex[i].index < valuesWithIndex[j].index
+	})
+
+	result := make([]string, 0, len(valuesWithIndex))
+	for _, value := range valuesWithIndex {
+		result = append(result, value.value)
+	}
+
+	return result
+}
+
+func parseIntFormValue(value string) int {
+	if value == "" {
+		return 0
+	}
+
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return 0
+	}
+
+	return n
 }
 
 // readEC2JSONRequest reads and decodes JSON request body.
