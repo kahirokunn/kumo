@@ -320,6 +320,106 @@ func assertSingleSecurityGroup(t *testing.T, securityGroups []types.SecurityGrou
 	}
 }
 
+func assertSecurityGroupHasTags(t *testing.T, securityGroups []types.SecurityGroup, expectedGroupID string, expectedTags map[string]string) {
+	t.Helper()
+
+	if len(securityGroups) != 1 {
+		t.Fatalf("unexpected security group count: got %d want 1", len(securityGroups))
+	}
+
+	securityGroup := securityGroups[0]
+	if got := aws.ToString(securityGroup.GroupId); got != expectedGroupID {
+		t.Fatalf("unexpected security group ID: got %q want %q", got, expectedGroupID)
+	}
+	if len(securityGroup.Tags) != len(expectedTags) {
+		t.Fatalf("unexpected tag count: got %d want %d", len(securityGroup.Tags), len(expectedTags))
+	}
+
+	for _, tag := range securityGroup.Tags {
+		key := aws.ToString(tag.Key)
+		if value, ok := expectedTags[key]; !ok || aws.ToString(tag.Value) != value {
+			t.Fatalf("unexpected tag: %q=%q", key, aws.ToString(tag.Value))
+		}
+	}
+}
+
+func TestEC2_CreateAndDeleteTags(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := t.Context()
+
+	vpcResult, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{
+		CidrBlock: aws.String("10.2.0.0/16"),
+	})
+	if err != nil {
+		t.Fatalf("failed to create VPC: %v", err)
+	}
+
+	vpcID := aws.ToString(vpcResult.Vpc.VpcId)
+	t.Cleanup(func() {
+		_, _ = client.DeleteVpc(context.Background(), &ec2.DeleteVpcInput{
+			VpcId: aws.String(vpcID),
+		})
+	})
+
+	createResult, err := client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String("test-tag-security-group"),
+		Description: aws.String("Test tag security group"),
+		VpcId:       aws.String(vpcID),
+	})
+	if err != nil {
+		t.Fatalf("failed to create security group: %v", err)
+	}
+
+	groupID := aws.ToString(createResult.GroupId)
+	t.Cleanup(func() {
+		_, _ = client.DeleteSecurityGroup(context.Background(), &ec2.DeleteSecurityGroupInput{
+			GroupId: aws.String(groupID),
+		})
+	})
+
+	_, err = client.CreateTags(ctx, &ec2.CreateTagsInput{
+		Resources: []string{groupID},
+		Tags: []types.Tag{
+			{Key: aws.String("Name"), Value: aws.String("test-tag-security-group")},
+			{Key: aws.String("stage"), Value: aws.String("e2e")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create tags: %v", err)
+	}
+
+	describeAfterCreateTagsResult, err := client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		GroupIds: []string{groupID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSecurityGroupHasTags(t, describeAfterCreateTagsResult.SecurityGroups, groupID, map[string]string{
+		"Name":  "test-tag-security-group",
+		"stage": "e2e",
+	})
+
+	_, err = client.DeleteTags(ctx, &ec2.DeleteTagsInput{
+		Resources: []string{groupID},
+		Tags: []types.Tag{
+			{Key: aws.String("stage"), Value: aws.String("e2e")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to delete tags: %v", err)
+	}
+
+	describeAfterDeleteTagsResult, err := client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		GroupIds: []string{groupID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSecurityGroupHasTags(t, describeAfterDeleteTagsResult.SecurityGroups, groupID, map[string]string{
+		"Name": "test-tag-security-group",
+	})
+}
+
 func TestEC2_CreateAndDeleteKeyPair(t *testing.T) {
 	client := newEC2Client(t)
 	ctx := t.Context()

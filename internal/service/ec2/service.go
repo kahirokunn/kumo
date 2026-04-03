@@ -66,6 +66,8 @@ func (s *Service) Actions() []string {
 		"DescribeSecurityGroups",
 		"AuthorizeSecurityGroupIngress",
 		"AuthorizeSecurityGroupEgress",
+		"CreateTags",
+		"DeleteTags",
 		// Key Pair operations
 		"CreateKeyPair",
 		"DeleteKeyPair",

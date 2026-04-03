@@ -73,6 +73,8 @@ type Storage interface {
 	DescribeSecurityGroups(ctx context.Context, groupIDs, groupNames []string, filters []Filter) ([]*SecurityGroup, error)
 	AuthorizeSecurityGroupIngress(ctx context.Context, groupID, groupName string, permissions []IPPermission) error
 	AuthorizeSecurityGroupEgress(ctx context.Context, groupID string, permissions []IPPermission) error
+	CreateTags(ctx context.Context, resourceIDs []string, tags []Tag) error
+	DeleteTags(ctx context.Context, resourceIDs []string, tags []Tag) error
 
 	// Key Pair operations
 	CreateKeyPair(ctx context.Context, keyName, keyType string) (*KeyPair, error)
@@ -544,7 +546,39 @@ func (m *MemoryStorage) AuthorizeSecurityGroupIngress(_ context.Context, groupID
 	return nil
 }
 
+// CreateTags adds or updates tags on resources.
+func (m *MemoryStorage) CreateTags(_ context.Context, resourceIDs []string, tags []Tag) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
+	for _, resourceID := range resourceIDs {
+		resourceTags, err := m.lookupResourceTagsLocked(resourceID)
+		if err != nil {
+			return err
+		}
+
+		*resourceTags = mergeTags(*resourceTags, tags)
+	}
+
+	return nil
+}
+
+// DeleteTags removes tags from resources.
+func (m *MemoryStorage) DeleteTags(_ context.Context, resourceIDs []string, tags []Tag) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, resourceID := range resourceIDs {
+		resourceTags, err := m.lookupResourceTagsLocked(resourceID)
+		if err != nil {
+			return err
+		}
+
+		*resourceTags = removeTags(*resourceTags, tags)
+	}
+
+	return nil
+}
 
 func (m *MemoryStorage) matchSecurityGroupFilters(sg *SecurityGroup, filters []Filter) bool {
 	if len(filters) == 0 {
@@ -580,6 +614,75 @@ func (m *MemoryStorage) matchSecurityGroupFilters(sg *SecurityGroup, filters []F
 	return true
 }
 
+func (m *MemoryStorage) lookupResourceTagsLocked(resourceID string) (*[]Tag, error) {
+	switch {
+	case strings.HasPrefix(resourceID, "sg-"):
+		sg, exists := m.SecurityGroups[resourceID]
+		if !exists {
+			return nil, &Error{
+				Code:    "InvalidGroup.NotFound",
+				Message: fmt.Sprintf("The security group '%s' does not exist", resourceID),
+			}
+		}
+
+		return &sg.Tags, nil
+	case strings.HasPrefix(resourceID, "vpc-"):
+		vpc, exists := m.Vpcs[resourceID]
+		if !exists {
+			return nil, &Error{
+				Code:    "InvalidVpcID.NotFound",
+				Message: fmt.Sprintf("The vpc ID '%s' does not exist", resourceID),
+			}
+		}
+
+		return &vpc.Tags, nil
+	case strings.HasPrefix(resourceID, "subnet-"):
+		subnet, exists := m.Subnets[resourceID]
+		if !exists {
+			return nil, &Error{
+				Code:    "InvalidSubnetID.NotFound",
+				Message: fmt.Sprintf("The subnet ID '%s' does not exist", resourceID),
+			}
+		}
+
+		return &subnet.Tags, nil
+	case strings.HasPrefix(resourceID, "igw-"):
+		igw, exists := m.InternetGateways[resourceID]
+		if !exists {
+			return nil, &Error{
+				Code:    "InvalidInternetGatewayID.NotFound",
+				Message: fmt.Sprintf("The internet gateway ID '%s' does not exist", resourceID),
+			}
+		}
+
+		return &igw.Tags, nil
+	case strings.HasPrefix(resourceID, "rtb-"):
+		rt, exists := m.RouteTables[resourceID]
+		if !exists {
+			return nil, &Error{
+				Code:    "InvalidRouteTableID.NotFound",
+				Message: fmt.Sprintf("The route table ID '%s' does not exist", resourceID),
+			}
+		}
+
+		return &rt.Tags, nil
+	case strings.HasPrefix(resourceID, "nat-"):
+		natgw, exists := m.NatGateways[resourceID]
+		if !exists {
+			return nil, &Error{
+				Code:    "NatGatewayNotFound",
+				Message: fmt.Sprintf("The nat gateway '%s' does not exist", resourceID),
+			}
+		}
+
+		return &natgw.Tags, nil
+	default:
+		return nil, &Error{
+			Code:    "InvalidParameterValue",
+			Message: fmt.Sprintf("The resource '%s' does not support tagging", resourceID),
+		}
+	}
+}
 
 func tagsForResourceType(specs []TagSpecification, resourceType string) []Tag {
 	for _, spec := range specs {
@@ -594,8 +697,60 @@ func tagsForResourceType(specs []TagSpecification, resourceType string) []Tag {
 	return nil
 }
 
+func mergeTags(existing, updates []Tag) []Tag {
+	if len(updates) == 0 {
+		return existing
+	}
 
+	merged := make([]Tag, 0, len(existing)+len(updates))
+	merged = append(merged, existing...)
 
+	for _, update := range updates {
+		replaced := false
+		for i := range merged {
+			if merged[i].Key == update.Key {
+				merged[i].Value = update.Value
+				replaced = true
+
+				break
+			}
+		}
+
+		if !replaced {
+			merged = append(merged, update)
+		}
+	}
+
+	return merged
+}
+
+func removeTags(existing, removals []Tag) []Tag {
+	if len(existing) == 0 || len(removals) == 0 {
+		return existing
+	}
+
+	result := make([]Tag, 0, len(existing))
+	for _, tag := range existing {
+		if !shouldRemoveTag(tag, removals) {
+			result = append(result, tag)
+		}
+	}
+
+	return result
+}
+
+func shouldRemoveTag(tag Tag, removals []Tag) bool {
+	for _, removal := range removals {
+		if removal.Key != tag.Key {
+			continue
+		}
+		if removal.Value == "" || removal.Value == tag.Value {
+			return true
+		}
+	}
+
+	return false
+}
 
 func containsAnyTagKey(tags []Tag, keys []string) bool {
 	for _, tag := range tags {
