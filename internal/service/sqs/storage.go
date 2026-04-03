@@ -26,11 +26,14 @@ type DeduplicationEntry struct {
 
 // Storage defines the interface for SQS storage operations.
 type Storage interface {
-	CreateQueue(ctx context.Context, name string, attributes map[string]string) (*Queue, error)
+	CreateQueue(ctx context.Context, name string, attributes, tags map[string]string) (*Queue, error)
 	DeleteQueue(ctx context.Context, queueURL string) error
 	ListQueues(ctx context.Context, prefix string) ([]string, error)
 	GetQueueURL(ctx context.Context, name string) (string, error)
 	GetQueue(ctx context.Context, queueURL string) (*Queue, error)
+	ListQueueTags(ctx context.Context, queueURL string) (map[string]string, error)
+	TagQueue(ctx context.Context, queueURL string, tags map[string]string) error
+	UntagQueue(ctx context.Context, queueURL string, tagKeys []string) error
 	SendMessage(ctx context.Context, queueURL, body string, delaySeconds int, messageAttributes map[string]MessageAttributeValue, messageGroupID, messageDeduplicationID string) (*Message, error)
 	ReceiveMessage(ctx context.Context, queueURL string, maxMessages, visibilityTimeout, waitTimeSeconds int) ([]*Message, error)
 	DeleteMessage(ctx context.Context, queueURL, receiptHandle string) error
@@ -187,14 +190,36 @@ func (s *MemoryStorage) resolveQueueData(queueURL string) (string, *QueueData, e
 	return "", nil, ErrQueueDoesNotExist
 }
 
+func cloneStringMap(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+
+	return dst
+}
+
 // CreateQueue creates a new queue.
-func (s *MemoryStorage) CreateQueue(_ context.Context, name string, attributes map[string]string) (*Queue, error) {
+func (s *MemoryStorage) CreateQueue(_ context.Context, name string, attributes, tags map[string]string) (*Queue, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	queueURL := fmt.Sprintf("%s/000000000000/%s", s.baseURL, name)
 
 	if qd, exists := s.Queues[queueURL]; exists {
+		if len(tags) > 0 {
+			if qd.Queue.Tags == nil {
+				qd.Queue.Tags = make(map[string]string, len(tags))
+			}
+			for k, v := range tags {
+				qd.Queue.Tags[k] = v
+			}
+			qd.Queue.LastModifiedTimestamp = time.Now()
+		}
 		return qd.Queue, nil
 	}
 
@@ -212,6 +237,7 @@ func (s *MemoryStorage) CreateQueue(_ context.Context, name string, attributes m
 		Name:                      name,
 		URL:                       queueURL,
 		ARN:                       fmt.Sprintf("arn:aws:sqs:us-east-1:000000000000:%s", name),
+		Tags:                      cloneStringMap(tags),
 		CreatedTimestamp:          now,
 		LastModifiedTimestamp:     now,
 		VisibilityTimeout:         30,
@@ -297,6 +323,58 @@ func (s *MemoryStorage) GetQueue(_ context.Context, queueURL string) (*Queue, er
 	}
 
 	return qd.Queue, nil
+}
+
+// ListQueueTags gets the tags for a queue.
+func (s *MemoryStorage) ListQueueTags(_ context.Context, queueURL string) (map[string]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	_, qd, err := s.resolveQueueData(queueURL)
+	if err != nil {
+		return nil, err
+	}
+
+	return cloneStringMap(qd.Queue.Tags), nil
+}
+
+// TagQueue adds or updates tags for a queue.
+func (s *MemoryStorage) TagQueue(_ context.Context, queueURL string, tags map[string]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, qd, err := s.resolveQueueData(queueURL)
+	if err != nil {
+		return err
+	}
+
+	if qd.Queue.Tags == nil {
+		qd.Queue.Tags = make(map[string]string, len(tags))
+	}
+	for k, v := range tags {
+		qd.Queue.Tags[k] = v
+	}
+	qd.Queue.LastModifiedTimestamp = time.Now()
+
+	return nil
+}
+
+// UntagQueue removes tags from a queue.
+func (s *MemoryStorage) UntagQueue(_ context.Context, queueURL string, tagKeys []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	_, qd, err := s.resolveQueueData(queueURL)
+	if err != nil {
+		return err
+	}
+
+	for _, key := range tagKeys {
+		delete(qd.Queue.Tags, key)
+	}
+	qd.Queue.LastModifiedTimestamp = time.Now()
+
+	return nil
 }
 
 // FifoResult holds the result of FIFO validation and deduplication.
