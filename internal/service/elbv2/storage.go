@@ -23,6 +23,8 @@ type Storage interface {
 	CreateLoadBalancer(ctx context.Context, req *CreateLoadBalancerRequest) (*LoadBalancer, error)
 	DeleteLoadBalancer(ctx context.Context, loadBalancerArn string) error
 	DescribeLoadBalancers(ctx context.Context, arns, names []string) ([]*LoadBalancer, error)
+	DescribeLoadBalancerAttributes(ctx context.Context, loadBalancerArn string) (map[string]string, error)
+	ModifyLoadBalancerAttributes(ctx context.Context, loadBalancerArn string, attributes []Attribute) (map[string]string, error)
 	DescribeTags(ctx context.Context, resourceArns []string) ([]*TagDescription, error)
 	AddTags(ctx context.Context, resourceArns []string, tags []Tag) error
 	RemoveTags(ctx context.Context, resourceArns []string, tagKeys []string) error
@@ -30,6 +32,8 @@ type Storage interface {
 	CreateTargetGroup(ctx context.Context, req *CreateTargetGroupRequest) (*TargetGroup, error)
 	DeleteTargetGroup(ctx context.Context, targetGroupArn string) error
 	DescribeTargetGroups(ctx context.Context, arns, names []string, lbArn string) ([]*TargetGroup, error)
+	DescribeTargetGroupAttributes(ctx context.Context, targetGroupArn string) (map[string]string, error)
+	ModifyTargetGroupAttributes(ctx context.Context, targetGroupArn string, attributes []Attribute) (map[string]string, error)
 
 	RegisterTargets(ctx context.Context, targetGroupArn string, targets []Target) error
 	DeregisterTargets(ctx context.Context, targetGroupArn string, targets []Target) error
@@ -232,6 +236,7 @@ func (m *MemoryStorage) buildLoadBalancer(req *CreateLoadBalancerRequest, defaul
 		SecurityGroups:        req.SecurityGroups,
 		IPAddressType:         defaults.ipAddressType,
 		Tags:                  append([]Tag(nil), req.Tags...),
+		Attributes:            map[string]string{},
 	}
 }
 
@@ -300,6 +305,46 @@ func (m *MemoryStorage) DescribeLoadBalancers(_ context.Context, arns, names []s
 	}
 
 	return result, nil
+}
+
+// DescribeLoadBalancerAttributes describes load balancer attributes.
+func (m *MemoryStorage) DescribeLoadBalancerAttributes(_ context.Context, loadBalancerArn string) (map[string]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	lb, ok := m.LoadBalancers[loadBalancerArn]
+	if !ok {
+		return nil, &Error{
+			Code:    "LoadBalancerNotFound",
+			Message: fmt.Sprintf("Load balancer '%s' not found", loadBalancerArn),
+		}
+	}
+
+	return cloneAttributes(lb.Attributes), nil
+}
+
+// ModifyLoadBalancerAttributes modifies load balancer attributes.
+func (m *MemoryStorage) ModifyLoadBalancerAttributes(_ context.Context, loadBalancerArn string, attributes []Attribute) (map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	lb, ok := m.LoadBalancers[loadBalancerArn]
+	if !ok {
+		return nil, &Error{
+			Code:    "LoadBalancerNotFound",
+			Message: fmt.Sprintf("Load balancer '%s' not found", loadBalancerArn),
+		}
+	}
+
+	if lb.Attributes == nil {
+		lb.Attributes = make(map[string]string)
+	}
+
+	for _, attribute := range attributes {
+		lb.Attributes[attribute.Key] = attribute.Value
+	}
+
+	return cloneAttributes(lb.Attributes), nil
 }
 
 // DescribeTags describes tags for ELBv2 resources.
@@ -482,6 +527,7 @@ func (m *MemoryStorage) buildTargetGroup(req *CreateTargetGroupRequest, defaults
 		TargetType:                 defaults.targetType,
 		LoadBalancerArns:           []string{},
 		Tags:                       append([]Tag(nil), req.Tags...),
+		Attributes:                 map[string]string{},
 	}
 }
 
@@ -550,6 +596,46 @@ func (m *MemoryStorage) DescribeTargetGroups(_ context.Context, arns, names []st
 	}
 
 	return result, nil
+}
+
+// DescribeTargetGroupAttributes describes target group attributes.
+func (m *MemoryStorage) DescribeTargetGroupAttributes(_ context.Context, targetGroupArn string) (map[string]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	tg, ok := m.TargetGroups[targetGroupArn]
+	if !ok {
+		return nil, &Error{
+			Code:    "TargetGroupNotFound",
+			Message: fmt.Sprintf("Target group '%s' not found", targetGroupArn),
+		}
+	}
+
+	return cloneAttributes(tg.Attributes), nil
+}
+
+// ModifyTargetGroupAttributes modifies target group attributes.
+func (m *MemoryStorage) ModifyTargetGroupAttributes(_ context.Context, targetGroupArn string, attributes []Attribute) (map[string]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	tg, ok := m.TargetGroups[targetGroupArn]
+	if !ok {
+		return nil, &Error{
+			Code:    "TargetGroupNotFound",
+			Message: fmt.Sprintf("Target group '%s' not found", targetGroupArn),
+		}
+	}
+
+	if tg.Attributes == nil {
+		tg.Attributes = make(map[string]string)
+	}
+
+	for _, attribute := range attributes {
+		tg.Attributes[attribute.Key] = attribute.Value
+	}
+
+	return cloneAttributes(tg.Attributes), nil
 }
 
 // RegisterTargets registers targets with a target group.
@@ -731,4 +817,17 @@ func removeTags(tags *[]Tag, tagKeys []string) {
 	}
 
 	*tags = filteredTags
+}
+
+func cloneAttributes(attributes map[string]string) map[string]string {
+	if len(attributes) == 0 {
+		return map[string]string{}
+	}
+
+	cloned := make(map[string]string, len(attributes))
+	for key, value := range attributes {
+		cloned[key] = value
+	}
+
+	return cloned
 }

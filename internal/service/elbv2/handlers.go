@@ -122,6 +122,56 @@ func (s *Service) DescribeLoadBalancers(w http.ResponseWriter, r *http.Request) 
 }
 
 
+// DescribeLoadBalancerAttributes handles the DescribeLoadBalancerAttributes action.
+func (s *Service) DescribeLoadBalancerAttributes(w http.ResponseWriter, r *http.Request) {
+	var req DescribeLoadBalancerAttributesRequest
+	if err := readELBJSONRequest(r, &req); err != nil {
+		writeELBError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+
+	attributes, err := s.storage.DescribeLoadBalancerAttributes(r.Context(), req.LoadBalancerArn)
+	if err != nil {
+		handleELBError(w, err)
+
+		return
+	}
+
+	writeELBXMLResponse(w, XMLDescribeLoadBalancerAttributesResponse{
+		Xmlns: elbXMLNS,
+		Result: XMLDescribeLoadBalancerAttributesResult{
+			Attributes: convertToXMLAttributes(attributes),
+		},
+		ResponseMetadata: XMLResponseMetadata{RequestID: uuid.New().String()},
+	})
+}
+
+// ModifyLoadBalancerAttributes handles the ModifyLoadBalancerAttributes action.
+func (s *Service) ModifyLoadBalancerAttributes(w http.ResponseWriter, r *http.Request) {
+	var req ModifyLoadBalancerAttributesRequest
+	if err := readELBJSONRequest(r, &req); err != nil {
+		writeELBError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+
+	attributes, err := s.storage.ModifyLoadBalancerAttributes(r.Context(), req.LoadBalancerArn, req.Attributes)
+	if err != nil {
+		handleELBError(w, err)
+
+		return
+	}
+
+	writeELBXMLResponse(w, XMLModifyLoadBalancerAttributesResponse{
+		Xmlns: elbXMLNS,
+		Result: XMLModifyLoadBalancerAttributesResult{
+			Attributes: convertToXMLAttributes(attributes),
+		},
+		ResponseMetadata: XMLResponseMetadata{RequestID: uuid.New().String()},
+	})
+}
+
 // DescribeTags handles the DescribeTags action.
 func (s *Service) DescribeTags(w http.ResponseWriter, r *http.Request) {
 	var req DescribeTagsRequest
@@ -311,6 +361,56 @@ func (s *Service) DescribeTargetGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 
+// DescribeTargetGroupAttributes handles the DescribeTargetGroupAttributes action.
+func (s *Service) DescribeTargetGroupAttributes(w http.ResponseWriter, r *http.Request) {
+	var req DescribeTargetGroupAttributesRequest
+	if err := readELBJSONRequest(r, &req); err != nil {
+		writeELBError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+
+	attributes, err := s.storage.DescribeTargetGroupAttributes(r.Context(), req.TargetGroupArn)
+	if err != nil {
+		handleELBError(w, err)
+
+		return
+	}
+
+	writeELBXMLResponse(w, XMLDescribeTargetGroupAttributesResponse{
+		Xmlns: elbXMLNS,
+		Result: XMLDescribeTargetGroupAttributesResult{
+			Attributes: convertToXMLAttributes(attributes),
+		},
+		ResponseMetadata: XMLResponseMetadata{RequestID: uuid.New().String()},
+	})
+}
+
+// ModifyTargetGroupAttributes handles the ModifyTargetGroupAttributes action.
+func (s *Service) ModifyTargetGroupAttributes(w http.ResponseWriter, r *http.Request) {
+	var req ModifyTargetGroupAttributesRequest
+	if err := readELBJSONRequest(r, &req); err != nil {
+		writeELBError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+
+	attributes, err := s.storage.ModifyTargetGroupAttributes(r.Context(), req.TargetGroupArn, req.Attributes)
+	if err != nil {
+		handleELBError(w, err)
+
+		return
+	}
+
+	writeELBXMLResponse(w, XMLModifyTargetGroupAttributesResponse{
+		Xmlns: elbXMLNS,
+		Result: XMLModifyTargetGroupAttributesResult{
+			Attributes: convertToXMLAttributes(attributes),
+		},
+		ResponseMetadata: XMLResponseMetadata{RequestID: uuid.New().String()},
+	})
+}
+
 // RegisterTargets handles the RegisterTargets action.
 func (s *Service) RegisterTargets(w http.ResponseWriter, r *http.Request) {
 	var req RegisterTargetsRequest
@@ -453,12 +553,16 @@ func (s *Service) getActionHandler(action string) func(http.ResponseWriter, *htt
 		"CreateLoadBalancer":             s.CreateLoadBalancer,
 		"DeleteLoadBalancer":             s.DeleteLoadBalancer,
 		"DescribeLoadBalancers":          s.DescribeLoadBalancers,
+		"DescribeLoadBalancerAttributes": s.DescribeLoadBalancerAttributes,
+		"ModifyLoadBalancerAttributes":   s.ModifyLoadBalancerAttributes,
 		"DescribeTags":                   s.DescribeTags,
 		"AddTags":                        s.AddTags,
 		"RemoveTags":                     s.RemoveTags,
 		"CreateTargetGroup":              s.CreateTargetGroup,
 		"DeleteTargetGroup":              s.DeleteTargetGroup,
 		"DescribeTargetGroups":           s.DescribeTargetGroups,
+		"DescribeTargetGroupAttributes":  s.DescribeTargetGroupAttributes,
+		"ModifyTargetGroupAttributes":    s.ModifyTargetGroupAttributes,
 		"RegisterTargets":                s.RegisterTargets,
 		"DeregisterTargets":              s.DeregisterTargets,
 		"CreateListener":                 s.CreateListener,
@@ -548,6 +652,25 @@ func convertToXMLTagDescription(description *TagDescription) XMLTagDescription {
 	}
 }
 
+
+// convertToXMLAttributes converts attributes to XMLAttributes.
+func convertToXMLAttributes(attributes map[string]string) XMLAttributes {
+	keys := make([]string, 0, len(attributes))
+	for key := range attributes {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	xmlAttributes := make([]XMLAttribute, 0, len(keys))
+	for _, key := range keys {
+		xmlAttributes = append(xmlAttributes, XMLAttribute{
+			Key:   key,
+			Value: attributes[key],
+		})
+	}
+
+	return XMLAttributes{Members: xmlAttributes}
+}
 
 // readELBJSONRequest reads and decodes JSON request body.
 func readELBJSONRequest(r *http.Request, v any) error {
