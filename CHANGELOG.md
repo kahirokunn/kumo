@@ -1,5 +1,7 @@
 # Changelog
 
+## [v0.7.0](https://github.com/kahirokunn/kumo/compare/v0.7.1...v0.7.0) - 2026-04-03
+
 ## [v0.7.0](https://github.com/sivchari/kumo/compare/v0.6.0...v0.7.0) - 2026-03-31
 - feat(s3): add DeleteObjects (multi-object delete) support by @sivchari in https://github.com/sivchari/kumo/pull/388
 - feat(dynamodb): add UpdateTimeToLive and DescribeTimeToLive actions by @sivchari in https://github.com/sivchari/kumo/pull/389
