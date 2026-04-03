@@ -40,6 +40,10 @@ type Storage interface {
 	DeregisterTargets(ctx context.Context, targetGroupArn string, targets []Target) error
 
 	CreateListener(ctx context.Context, req *CreateListenerRequest) (*Listener, error)
+	CreateRule(ctx context.Context, req *CreateRuleRequest) (*Rule, error)
+	DescribeListeners(ctx context.Context, listenerArns []string, loadBalancerArn string) ([]*Listener, error)
+	DescribeRules(ctx context.Context, listenerArn string, ruleArns []string) ([]*Rule, error)
+	DescribeListenerAttributes(ctx context.Context, listenerArn string) (map[string]string, error)
 	DeleteListener(ctx context.Context, listenerArn string) error
 }
 
@@ -65,6 +69,7 @@ type MemoryStorage struct {
 	LoadBalancers map[string]*LoadBalancer `json:"loadBalancers"` // keyed by ARN
 	TargetGroups  map[string]*TargetGroup  `json:"targetGroups"`  // keyed by ARN
 	Listeners     map[string]*Listener     `json:"listeners"`     // keyed by ARN
+	Rules         map[string]*Rule         `json:"rules"`         // keyed by ARN
 	Targets       map[string][]Target      `json:"targets"`       // keyed by targetGroupArn
 	dataDir       string
 }
@@ -75,6 +80,7 @@ func NewMemoryStorage(opts ...Option) *MemoryStorage {
 		LoadBalancers: make(map[string]*LoadBalancer),
 		TargetGroups:  make(map[string]*TargetGroup),
 		Listeners:     make(map[string]*Listener),
+		Rules:         make(map[string]*Rule),
 		Targets:       make(map[string][]Target),
 	}
 	for _, o := range opts {
@@ -126,6 +132,10 @@ func (m *MemoryStorage) UnmarshalJSON(data []byte) error {
 
 	if m.Listeners == nil {
 		m.Listeners = make(map[string]*Listener)
+	}
+
+	if m.Rules == nil {
+		m.Rules = make(map[string]*Rule)
 	}
 
 	if m.Targets == nil {
@@ -256,6 +266,11 @@ func (m *MemoryStorage) DeleteLoadBalancer(_ context.Context, loadBalancerArn st
 	// Delete associated listeners.
 	for arn, listener := range m.Listeners {
 		if listener.LoadBalancerArn == loadBalancerArn {
+			for ruleArn, rule := range m.Rules {
+				if rule.ListenerArn == arn {
+					delete(m.Rules, ruleArn)
+				}
+			}
 			delete(m.Listeners, arn)
 		}
 	}
@@ -765,6 +780,8 @@ func (m *MemoryStorage) CreateListener(_ context.Context, req *CreateListenerReq
 		Port:            req.Port,
 		Protocol:        req.Protocol,
 		DefaultActions:  req.DefaultActions,
+		Tags:            append([]Tag(nil), req.Tags...),
+		Attributes:      map[string]string{},
 	}
 
 	m.Listeners[arn] = listener
@@ -783,6 +800,123 @@ func (m *MemoryStorage) CreateListener(_ context.Context, req *CreateListenerReq
 	return listener, nil
 }
 
+// CreateRule creates a new listener rule.
+func (m *MemoryStorage) CreateRule(_ context.Context, req *CreateRuleRequest) (*Rule, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.Listeners[req.ListenerArn]; !ok {
+		return nil, &Error{
+			Code:    "ListenerNotFound",
+			Message: fmt.Sprintf("Listener '%s' not found", req.ListenerArn),
+		}
+	}
+
+	ruleID := uuid.New().String()[:17]
+	ruleArn := fmt.Sprintf("arn:aws:elasticloadbalancing:%s:%s:listener-rule/%s/%s",
+		defaultRegion, defaultAccountID, ruleID, uuid.New().String()[:17])
+
+	rule := &Rule{
+		RuleArn:     ruleArn,
+		ListenerArn: req.ListenerArn,
+		Priority:    req.Priority,
+		IsDefault:   false,
+		Actions:     append([]Action(nil), req.Actions...),
+		Conditions:  append([]RuleCondition(nil), req.Conditions...),
+		Tags:        append([]Tag(nil), req.Tags...),
+	}
+
+	m.Rules[ruleArn] = rule
+
+	return rule, nil
+}
+
+// DescribeListeners describes listeners.
+func (m *MemoryStorage) DescribeListeners(_ context.Context, listenerArns []string, loadBalancerArn string) ([]*Listener, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make([]*Listener, 0)
+
+	if len(listenerArns) == 0 && loadBalancerArn == "" {
+		for _, listener := range m.Listeners {
+			result = append(result, listener)
+		}
+
+		return result, nil
+	}
+
+	listenerArnSet := make(map[string]bool, len(listenerArns))
+	for _, listenerArn := range listenerArns {
+		listenerArnSet[listenerArn] = true
+	}
+
+	for _, listener := range m.Listeners {
+		if len(listenerArns) > 0 && listenerArnSet[listener.ListenerArn] {
+			result = append(result, listener)
+
+			continue
+		}
+
+		if loadBalancerArn != "" && listener.LoadBalancerArn == loadBalancerArn {
+			result = append(result, listener)
+		}
+	}
+
+	return result, nil
+}
+
+// DescribeRules describes rules.
+func (m *MemoryStorage) DescribeRules(_ context.Context, listenerArn string, ruleArns []string) ([]*Rule, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	result := make([]*Rule, 0)
+
+	if listenerArn == "" && len(ruleArns) == 0 {
+		for _, rule := range m.Rules {
+			result = append(result, rule)
+		}
+
+		return result, nil
+	}
+
+	ruleArnSet := make(map[string]bool, len(ruleArns))
+	for _, ruleArn := range ruleArns {
+		ruleArnSet[ruleArn] = true
+	}
+
+	for _, rule := range m.Rules {
+		if len(ruleArns) > 0 && ruleArnSet[rule.RuleArn] {
+			result = append(result, rule)
+
+			continue
+		}
+
+		if listenerArn != "" && rule.ListenerArn == listenerArn {
+			result = append(result, rule)
+		}
+	}
+
+	return result, nil
+}
+
+// DescribeListenerAttributes describes listener attributes.
+func (m *MemoryStorage) DescribeListenerAttributes(_ context.Context, listenerArn string) (map[string]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	listener, ok := m.Listeners[listenerArn]
+	if !ok {
+		return nil, &Error{
+			Code:    "ListenerNotFound",
+			Message: fmt.Sprintf("Listener '%s' not found", listenerArn),
+		}
+	}
+
+	return cloneAttributes(listener.Attributes), nil
+}
+
 // DeleteListener deletes a listener.
 func (m *MemoryStorage) DeleteListener(_ context.Context, listenerArn string) error {
 	m.mu.Lock()
@@ -792,6 +926,12 @@ func (m *MemoryStorage) DeleteListener(_ context.Context, listenerArn string) er
 		return &Error{
 			Code:    "ListenerNotFound",
 			Message: fmt.Sprintf("Listener '%s' not found", listenerArn),
+		}
+	}
+
+	for ruleArn, rule := range m.Rules {
+		if rule.ListenerArn == listenerArn {
+			delete(m.Rules, ruleArn)
 		}
 	}
 
@@ -809,6 +949,14 @@ func (m *MemoryStorage) getResourceTagsLocked(resourceArn string) ([]Tag, bool) 
 		return tg.Tags, true
 	}
 
+	if listener, ok := m.Listeners[resourceArn]; ok {
+		return listener.Tags, true
+	}
+
+	if rule, ok := m.Rules[resourceArn]; ok {
+		return rule.Tags, true
+	}
+
 	return nil, false
 }
 
@@ -819,6 +967,14 @@ func (m *MemoryStorage) getMutableResourceTagsLocked(resourceArn string) (*[]Tag
 
 	if tg, ok := m.TargetGroups[resourceArn]; ok {
 		return &tg.Tags, true
+	}
+
+	if listener, ok := m.Listeners[resourceArn]; ok {
+		return &listener.Tags, true
+	}
+
+	if rule, ok := m.Rules[resourceArn]; ok {
+		return &rule.Tags, true
 	}
 
 	return nil, false

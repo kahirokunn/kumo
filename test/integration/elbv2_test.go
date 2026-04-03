@@ -447,7 +447,6 @@ func TestELBv2_RegisterAndDeregisterTargets(t *testing.T) {
 	}
 }
 
-
 func TestELBv2_DescribeTargetHealth(t *testing.T) {
 	client := newELBv2Client(t)
 	ctx := t.Context()
@@ -560,6 +559,234 @@ func TestELBv2_CreateAndDeleteListener(t *testing.T) {
 	}
 }
 
+func TestELBv2_DescribeListeners(t *testing.T) {
+	client := newELBv2Client(t)
+	ctx := t.Context()
+
+	lbResult, err := client.CreateLoadBalancer(ctx, &elasticloadbalancingv2.CreateLoadBalancerInput{
+		Name:    aws.String("test-describe-listener-lb"),
+		Subnets: []string{"subnet-12345678"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lbArn := lbResult.LoadBalancers[0].LoadBalancerArn
+
+	tgResult, err := client.CreateTargetGroup(ctx, &elasticloadbalancingv2.CreateTargetGroupInput{
+		Name:       aws.String("test-describe-listener-tg"),
+		Protocol:   types.ProtocolEnumHttp,
+		Port:       aws.Int32(80),
+		VpcId:      aws.String("vpc-12345678"),
+		TargetType: types.TargetTypeEnumInstance,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tgArn := tgResult.TargetGroups[0].TargetGroupArn
+
+	listenerResult, err := client.CreateListener(ctx, &elasticloadbalancingv2.CreateListenerInput{
+		LoadBalancerArn: lbArn,
+		Port:            aws.Int32(80),
+		Protocol:        types.ProtocolEnumHttp,
+		DefaultActions: []types.Action{
+			{
+				Type:           types.ActionTypeEnumForward,
+				TargetGroupArn: tgArn,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listenerArn := listenerResult.Listeners[0].ListenerArn
+
+	t.Cleanup(func() {
+		_, _ = client.DeleteListener(context.Background(), &elasticloadbalancingv2.DeleteListenerInput{
+			ListenerArn: listenerArn,
+		})
+		_, _ = client.DeleteTargetGroup(context.Background(), &elasticloadbalancingv2.DeleteTargetGroupInput{
+			TargetGroupArn: tgArn,
+		})
+		_, _ = client.DeleteLoadBalancer(context.Background(), &elasticloadbalancingv2.DeleteLoadBalancerInput{
+			LoadBalancerArn: lbArn,
+		})
+	})
+
+	descResult, err := client.DescribeListeners(ctx, &elasticloadbalancingv2.DescribeListenersInput{
+		LoadBalancerArn: lbArn,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	golden.New(t, golden.WithIgnoreFields("ListenerArn", "LoadBalancerArn", "TargetGroupArn", "ResultMetadata")).Assert(t.Name()+"_describe", descResult)
+}
+
+func TestELBv2_DescribeListenerAttributes(t *testing.T) {
+	client := newELBv2Client(t)
+	ctx := t.Context()
+
+	lbResult, err := client.CreateLoadBalancer(ctx, &elasticloadbalancingv2.CreateLoadBalancerInput{
+		Name:    aws.String("test-listener-attributes-lb"),
+		Subnets: []string{"subnet-12345678"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lbArn := lbResult.LoadBalancers[0].LoadBalancerArn
+
+	tgResult, err := client.CreateTargetGroup(ctx, &elasticloadbalancingv2.CreateTargetGroupInput{
+		Name:       aws.String("test-listener-attributes-tg"),
+		Protocol:   types.ProtocolEnumHttp,
+		Port:       aws.Int32(80),
+		VpcId:      aws.String("vpc-12345678"),
+		TargetType: types.TargetTypeEnumInstance,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tgArn := tgResult.TargetGroups[0].TargetGroupArn
+
+	listenerResult, err := client.CreateListener(ctx, &elasticloadbalancingv2.CreateListenerInput{
+		LoadBalancerArn: lbArn,
+		Port:            aws.Int32(80),
+		Protocol:        types.ProtocolEnumHttp,
+		DefaultActions: []types.Action{
+			{
+				Type:           types.ActionTypeEnumForward,
+				TargetGroupArn: tgArn,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listenerArn := listenerResult.Listeners[0].ListenerArn
+
+	t.Cleanup(func() {
+		_, _ = client.DeleteListener(context.Background(), &elasticloadbalancingv2.DeleteListenerInput{
+			ListenerArn: listenerArn,
+		})
+		_, _ = client.DeleteTargetGroup(context.Background(), &elasticloadbalancingv2.DeleteTargetGroupInput{
+			TargetGroupArn: tgArn,
+		})
+		_, _ = client.DeleteLoadBalancer(context.Background(), &elasticloadbalancingv2.DeleteLoadBalancerInput{
+			LoadBalancerArn: lbArn,
+		})
+	})
+
+	descResult, err := client.DescribeListenerAttributes(ctx, &elasticloadbalancingv2.DescribeListenerAttributesInput{
+		ListenerArn: listenerArn,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	golden.New(t, golden.WithIgnoreFields("ResultMetadata")).Assert(t.Name()+"_describe", descResult)
+}
+
+func TestELBv2_CreateAndDescribeRules(t *testing.T) {
+	client := newELBv2Client(t)
+	ctx := t.Context()
+
+	lbResult, err := client.CreateLoadBalancer(ctx, &elasticloadbalancingv2.CreateLoadBalancerInput{
+		Name:    aws.String("test-rules-lb"),
+		Subnets: []string{"subnet-12345678"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lbArn := lbResult.LoadBalancers[0].LoadBalancerArn
+
+	tgResult, err := client.CreateTargetGroup(ctx, &elasticloadbalancingv2.CreateTargetGroupInput{
+		Name:       aws.String("test-rules-tg"),
+		Protocol:   types.ProtocolEnumHttp,
+		Port:       aws.Int32(80),
+		VpcId:      aws.String("vpc-12345678"),
+		TargetType: types.TargetTypeEnumInstance,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tgArn := tgResult.TargetGroups[0].TargetGroupArn
+
+	listenerResult, err := client.CreateListener(ctx, &elasticloadbalancingv2.CreateListenerInput{
+		LoadBalancerArn: lbArn,
+		Port:            aws.Int32(80),
+		Protocol:        types.ProtocolEnumHttp,
+		DefaultActions: []types.Action{
+			{
+				Type: types.ActionTypeEnumFixedResponse,
+				FixedResponseConfig: &types.FixedResponseActionConfig{
+					ContentType: aws.String("text/plain"),
+					StatusCode:  aws.String("404"),
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	listenerArn := listenerResult.Listeners[0].ListenerArn
+
+	t.Cleanup(func() {
+		_, _ = client.DeleteListener(context.Background(), &elasticloadbalancingv2.DeleteListenerInput{
+			ListenerArn: listenerArn,
+		})
+		_, _ = client.DeleteTargetGroup(context.Background(), &elasticloadbalancingv2.DeleteTargetGroupInput{
+			TargetGroupArn: tgArn,
+		})
+		_, _ = client.DeleteLoadBalancer(context.Background(), &elasticloadbalancingv2.DeleteLoadBalancerInput{
+			LoadBalancerArn: lbArn,
+		})
+	})
+
+	createRuleResult, err := client.CreateRule(ctx, &elasticloadbalancingv2.CreateRuleInput{
+		ListenerArn: listenerArn,
+		Priority:    aws.Int32(1),
+		Actions: []types.Action{
+			{
+				Type: types.ActionTypeEnumForward,
+				ForwardConfig: &types.ForwardActionConfig{
+					TargetGroups: []types.TargetGroupTuple{
+						{TargetGroupArn: tgArn},
+					},
+				},
+			},
+		},
+		Conditions: []types.RuleCondition{
+			{
+				Field: aws.String("path-pattern"),
+				PathPatternConfig: &types.PathPatternConditionConfig{
+					Values: []string{"/*"},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	golden.New(t, golden.WithIgnoreFields("RuleArn", "TargetGroupArn", "ListenerArn", "ResultMetadata")).Assert(t.Name()+"_create", createRuleResult)
+
+	describeRulesResult, err := client.DescribeRules(ctx, &elasticloadbalancingv2.DescribeRulesInput{
+		ListenerArn: listenerArn,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	golden.New(t, golden.WithIgnoreFields("RuleArn", "TargetGroupArn", "ListenerArn", "ResultMetadata")).Assert(t.Name()+"_describe", describeRulesResult)
+}
 
 func TestELBv2_LoadBalancerWithTargetGroupAndListener(t *testing.T) {
 	client := newELBv2Client(t)
