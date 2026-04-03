@@ -28,7 +28,7 @@ func newEC2Client(t *testing.T) *ec2.Client {
 	}
 
 	return ec2.NewFromConfig(cfg, func(o *ec2.Options) {
-		o.BaseEndpoint = aws.String("http://localhost:4566")
+		o.BaseEndpoint = aws.String("http://127.0.0.1:4566")
 	})
 }
 
@@ -164,6 +164,71 @@ func TestEC2_CreateAndDeleteSecurityGroup(t *testing.T) {
 	}
 }
 
+func TestEC2_DescribeSecurityGroups(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := t.Context()
+
+	vpcResult, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{
+		CidrBlock: aws.String("10.1.0.0/16"),
+	})
+	if err != nil {
+		t.Fatalf("failed to create VPC: %v", err)
+	}
+
+	vpcID := aws.ToString(vpcResult.Vpc.VpcId)
+	t.Cleanup(func() {
+		_, _ = client.DeleteVpc(context.Background(), &ec2.DeleteVpcInput{
+			VpcId: aws.String(vpcID),
+		})
+	})
+
+	createResult, err := client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName:   aws.String("test-describe-security-group"),
+		Description: aws.String("Test describe security group"),
+		VpcId:       aws.String(vpcID),
+		TagSpecifications: []types.TagSpecification{
+			{
+				ResourceType: types.ResourceType("security-group"),
+				Tags: []types.Tag{
+					{Key: aws.String("Name"), Value: aws.String("test-describe-security-group")},
+					{Key: aws.String("elbv2.k8s.aws/cluster"), Value: aws.String("kumo-e2e")},
+					{Key: aws.String("elbv2.k8s.aws/resource"), Value: aws.String("backend-sg")},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create security group: %v", err)
+	}
+
+	groupID := aws.ToString(createResult.GroupId)
+	t.Cleanup(func() {
+		_, _ = client.DeleteSecurityGroup(context.Background(), &ec2.DeleteSecurityGroupInput{
+			GroupId: aws.String(groupID),
+		})
+	})
+
+	describeByIDResult, err := client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		GroupIds: []string{groupID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSingleSecurityGroup(t, describeByIDResult.SecurityGroups, groupID, vpcID, "test-describe-security-group")
+
+	describeByFilterResult, err := client.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{
+		Filters: []types.Filter{
+			{Name: aws.String("vpc-id"), Values: []string{vpcID}},
+			{Name: aws.String("tag:elbv2.k8s.aws/resource"), Values: []string{"backend-sg"}},
+			{Name: aws.String("tag-key"), Values: []string{"elbv2.k8s.aws/cluster"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSingleSecurityGroup(t, describeByFilterResult.SecurityGroups, groupID, vpcID, "test-describe-security-group")
+}
+
 func TestEC2_AuthorizeSecurityGroupIngress(t *testing.T) {
 	client := newEC2Client(t)
 	ctx := t.Context()
@@ -207,6 +272,52 @@ func TestEC2_AuthorizeSecurityGroupIngress(t *testing.T) {
 		t.Fatal(err)
 	}
 	golden.New(t, golden.WithIgnoreFields("ResultMetadata")).Assert(t.Name(), ingressResult)
+}
+
+func assertSingleSecurityGroup(t *testing.T, securityGroups []types.SecurityGroup, expectedGroupID, expectedVpcID, expectedName string) {
+	t.Helper()
+
+	if len(securityGroups) != 1 {
+		t.Fatalf("unexpected security group count: got %d want 1", len(securityGroups))
+	}
+
+	securityGroup := securityGroups[0]
+	if got := aws.ToString(securityGroup.GroupId); got != expectedGroupID {
+		t.Fatalf("unexpected security group ID: got %q want %q", got, expectedGroupID)
+	}
+	if got := aws.ToString(securityGroup.GroupName); got != expectedName {
+		t.Fatalf("unexpected security group name: got %q want %q", got, expectedName)
+	}
+	if got := aws.ToString(securityGroup.Description); got != "Test describe security group" {
+		t.Fatalf("unexpected security group description: got %q", got)
+	}
+	if got := aws.ToString(securityGroup.OwnerId); got != "000000000000" {
+		t.Fatalf("unexpected security group owner ID: got %q want %q", got, "000000000000")
+	}
+	if got := aws.ToString(securityGroup.VpcId); got != expectedVpcID {
+		t.Fatalf("unexpected security group VPC ID: got %q want %q", got, expectedVpcID)
+	}
+	if len(securityGroup.IpPermissions) != 0 {
+		t.Fatalf("unexpected ingress permission count: got %d want 0", len(securityGroup.IpPermissions))
+	}
+	if len(securityGroup.IpPermissionsEgress) != 0 {
+		t.Fatalf("unexpected egress permission count: got %d want 0", len(securityGroup.IpPermissionsEgress))
+	}
+
+	expectedTags := map[string]string{
+		"Name":                   "test-describe-security-group",
+		"elbv2.k8s.aws/cluster":  "kumo-e2e",
+		"elbv2.k8s.aws/resource": "backend-sg",
+	}
+	if len(securityGroup.Tags) != len(expectedTags) {
+		t.Fatalf("unexpected tag count: got %d want %d", len(securityGroup.Tags), len(expectedTags))
+	}
+	for _, tag := range securityGroup.Tags {
+		key := aws.ToString(tag.Key)
+		if value, ok := expectedTags[key]; !ok || aws.ToString(tag.Value) != value {
+			t.Fatalf("unexpected tag: %q=%q", key, aws.ToString(tag.Value))
+		}
+	}
 }
 
 func TestEC2_CreateAndDeleteKeyPair(t *testing.T) {
