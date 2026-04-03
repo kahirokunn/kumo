@@ -33,6 +33,7 @@ type Storage interface {
 	DeleteTargetGroup(ctx context.Context, targetGroupArn string) error
 	DescribeTargetGroups(ctx context.Context, arns, names []string, lbArn string) ([]*TargetGroup, error)
 	DescribeTargetGroupAttributes(ctx context.Context, targetGroupArn string) (map[string]string, error)
+	DescribeTargetHealth(ctx context.Context, targetGroupArn string, targets []Target) ([]*TargetHealthDescription, error)
 	ModifyTargetGroupAttributes(ctx context.Context, targetGroupArn string, attributes []Attribute) (map[string]string, error)
 
 	RegisterTargets(ctx context.Context, targetGroupArn string, targets []Target) error
@@ -614,6 +615,40 @@ func (m *MemoryStorage) DescribeTargetGroupAttributes(_ context.Context, targetG
 	return cloneAttributes(tg.Attributes), nil
 }
 
+// DescribeTargetHealth describes target health.
+func (m *MemoryStorage) DescribeTargetHealth(_ context.Context, targetGroupArn string, targets []Target) ([]*TargetHealthDescription, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if _, ok := m.TargetGroups[targetGroupArn]; !ok {
+		return nil, &Error{
+			Code:    "TargetGroupNotFound",
+			Message: fmt.Sprintf("Target group '%s' not found", targetGroupArn),
+		}
+	}
+
+	existingTargets := m.Targets[targetGroupArn]
+	if len(existingTargets) == 0 {
+		return nil, nil
+	}
+
+	descriptions := make([]*TargetHealthDescription, 0, len(existingTargets))
+	for _, target := range existingTargets {
+		if !matchesDescribeTargetHealthTargets(target, targets) {
+			continue
+		}
+
+		descriptions = append(descriptions, &TargetHealthDescription{
+			Target: target,
+			TargetHealth: TargetHealth{
+				State: "healthy",
+			},
+		})
+	}
+
+	return descriptions, nil
+}
+
 // ModifyTargetGroupAttributes modifies target group attributes.
 func (m *MemoryStorage) ModifyTargetGroupAttributes(_ context.Context, targetGroupArn string, attributes []Attribute) (map[string]string, error) {
 	m.mu.Lock()
@@ -830,4 +865,26 @@ func cloneAttributes(attributes map[string]string) map[string]string {
 	}
 
 	return cloned
+}
+
+func matchesDescribeTargetHealthTargets(target Target, filters []Target) bool {
+	if len(filters) == 0 {
+		return true
+	}
+
+	for _, filter := range filters {
+		if target.ID != filter.ID {
+			continue
+		}
+		if filter.Port != 0 && target.Port != filter.Port {
+			continue
+		}
+		if filter.AvailabilityZone != "" && target.AvailabilityZone != filter.AvailabilityZone {
+			continue
+		}
+
+		return true
+	}
+
+	return false
 }

@@ -386,6 +386,45 @@ func (s *Service) DescribeTargetGroupAttributes(w http.ResponseWriter, r *http.R
 	})
 }
 
+// DescribeTargetHealth handles the DescribeTargetHealth action.
+func (s *Service) DescribeTargetHealth(w http.ResponseWriter, r *http.Request) {
+	var req DescribeTargetHealthRequest
+	if err := readELBJSONRequest(r, &req); err != nil {
+		writeELBError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+	if len(req.Targets) == 0 {
+		req.Targets = parseELBTargetsFromForm(r.Form, "Targets.member")
+	}
+
+	if req.TargetGroupArn == "" {
+		writeELBError(w, errInvalidParameter, "TargetGroupArn is required", http.StatusBadRequest)
+
+		return
+	}
+
+	descriptions, err := s.storage.DescribeTargetHealth(r.Context(), req.TargetGroupArn, req.Targets)
+	if err != nil {
+		handleELBError(w, err)
+
+		return
+	}
+
+	xmlDescriptions := make([]XMLTargetHealthDescription, 0, len(descriptions))
+	for _, description := range descriptions {
+		xmlDescriptions = append(xmlDescriptions, convertToXMLTargetHealthDescription(description))
+	}
+
+	writeELBXMLResponse(w, XMLDescribeTargetHealthResponse{
+		Xmlns: elbXMLNS,
+		Result: XMLDescribeTargetHealthResult{
+			TargetHealthDescriptions: XMLTargetHealthDescriptions{Members: xmlDescriptions},
+		},
+		ResponseMetadata: XMLResponseMetadata{RequestID: uuid.New().String()},
+	})
+}
+
 // ModifyTargetGroupAttributes handles the ModifyTargetGroupAttributes action.
 func (s *Service) ModifyTargetGroupAttributes(w http.ResponseWriter, r *http.Request) {
 	var req ModifyTargetGroupAttributesRequest
@@ -562,6 +601,7 @@ func (s *Service) getActionHandler(action string) func(http.ResponseWriter, *htt
 		"DeleteTargetGroup":              s.DeleteTargetGroup,
 		"DescribeTargetGroups":           s.DescribeTargetGroups,
 		"DescribeTargetGroupAttributes":  s.DescribeTargetGroupAttributes,
+		"DescribeTargetHealth":           s.DescribeTargetHealth,
 		"ModifyTargetGroupAttributes":    s.ModifyTargetGroupAttributes,
 		"RegisterTargets":                s.RegisterTargets,
 		"DeregisterTargets":              s.DeregisterTargets,
@@ -621,6 +661,21 @@ func convertToXMLTargetGroup(tg *TargetGroup) XMLTargetGroup {
 	}
 }
 
+
+func convertToXMLTargetHealthDescription(description *TargetHealthDescription) XMLTargetHealthDescription {
+	return XMLTargetHealthDescription{
+		Target: XMLTarget{
+			ID:               description.Target.ID,
+			Port:             description.Target.Port,
+			AvailabilityZone: description.Target.AvailabilityZone,
+		},
+		TargetHealth: XMLTargetHealth{
+			State:       description.TargetHealth.State,
+			Reason:      description.TargetHealth.Reason,
+			Description: description.TargetHealth.Description,
+		},
+	}
+}
 
 // convertToXMLListener converts a Listener to XMLListener.
 func convertToXMLListener(l *Listener) XMLListener {
@@ -815,6 +870,65 @@ func parseELBSubnetMappingsFromForm(form url.Values, prefix string) []string {
 	return subnetIDs
 }
 
+
+func parseELBTargetsFromForm(form url.Values, prefix string) []Target {
+	entries := make(map[int]*Target)
+	for key, values := range form {
+		if len(values) == 0 || !strings.HasPrefix(key, prefix+".") {
+			continue
+		}
+
+		parts := strings.Split(key, ".")
+		if len(parts) != 4 {
+			continue
+		}
+
+		index, err := strconv.Atoi(parts[2])
+		if err != nil {
+			continue
+		}
+
+		entry := entries[index]
+		if entry == nil {
+			entry = &Target{}
+			entries[index] = entry
+		}
+
+		switch parts[3] {
+		case "Id":
+			entry.ID = values[0]
+		case "Port":
+			port, err := strconv.Atoi(values[0])
+			if err == nil {
+				entry.Port = port
+			}
+		case "AvailabilityZone":
+			entry.AvailabilityZone = values[0]
+		}
+	}
+
+	if len(entries) == 0 {
+		return nil
+	}
+
+	indexes := make([]int, 0, len(entries))
+	for index := range entries {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+
+	targets := make([]Target, 0, len(indexes))
+	for _, index := range indexes {
+		target := entries[index]
+		if target == nil || target.ID == "" {
+			continue
+		}
+
+		targets = append(targets, *target)
+	}
+
+	return targets
+}
 
 // extractAction extracts the action name from the request.
 func extractAction(r *http.Request) string {
