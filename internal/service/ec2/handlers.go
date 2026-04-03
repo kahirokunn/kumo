@@ -349,6 +349,68 @@ func (s *Service) AuthorizeSecurityGroupEgress(w http.ResponseWriter, r *http.Re
 	})
 }
 
+// CreateTags handles the CreateTags action.
+func (s *Service) CreateTags(w http.ResponseWriter, r *http.Request) {
+	var req CreateTagsRequest
+	if err := readEC2JSONRequest(r, &req); err != nil {
+		writeError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+	if tags := parseTagsFromForm(r.Form, "Tag"); len(tags) > 0 {
+		req.Tags = tags
+	}
+
+	if len(req.ResourceIDs) == 0 {
+		writeError(w, errInvalidParameter, "ResourceId is required", http.StatusBadRequest)
+
+		return
+	}
+
+	if err := s.storage.CreateTags(r.Context(), req.ResourceIDs, req.Tags); err != nil {
+		handleError(w, err)
+
+		return
+	}
+
+	writeEC2XMLResponse(w, XMLCreateTagsResponse{
+		Xmlns:     ec2XMLNS,
+		RequestID: uuid.New().String(),
+		Return:    true,
+	})
+}
+
+// DeleteTags handles the DeleteTags action.
+func (s *Service) DeleteTags(w http.ResponseWriter, r *http.Request) {
+	var req DeleteTagsRequest
+	if err := readEC2JSONRequest(r, &req); err != nil {
+		writeError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+	if tags := parseTagsFromForm(r.Form, "Tag"); len(tags) > 0 {
+		req.Tags = tags
+	}
+
+	if len(req.ResourceIDs) == 0 {
+		writeError(w, errInvalidParameter, "ResourceId is required", http.StatusBadRequest)
+
+		return
+	}
+
+	if err := s.storage.DeleteTags(r.Context(), req.ResourceIDs, req.Tags); err != nil {
+		handleError(w, err)
+
+		return
+	}
+
+	writeEC2XMLResponse(w, XMLDeleteTagsResponse{
+		Xmlns:     ec2XMLNS,
+		RequestID: uuid.New().String(),
+		Return:    true,
+	})
+}
+
 // CreateKeyPair handles the CreateKeyPair action.
 func (s *Service) CreateKeyPair(w http.ResponseWriter, r *http.Request) {
 	var req CreateKeyPairRequest
@@ -915,6 +977,8 @@ func (s *Service) getActionHandler(action string) func(http.ResponseWriter, *htt
 		"DescribeSecurityGroups":        s.DescribeSecurityGroups,
 		"AuthorizeSecurityGroupIngress": s.AuthorizeSecurityGroupIngress,
 		"AuthorizeSecurityGroupEgress":  s.AuthorizeSecurityGroupEgress,
+		"CreateTags":                    s.CreateTags,
+		"DeleteTags":                    s.DeleteTags,
 		// Key pair operations
 		"CreateKeyPair":    s.CreateKeyPair,
 		"DeleteKeyPair":    s.DeleteKeyPair,

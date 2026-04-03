@@ -160,7 +160,17 @@ type TagSpecification struct {
 	Tags         []Tag  `json:"Tags,omitempty"`
 }
 
+// CreateTagsRequest represents a CreateTags request.
+type CreateTagsRequest struct {
+	ResourceIDs []string `json:"ResourceIds,omitempty"`
+	Tags        []Tag    `json:"Tags,omitempty"`
+}
 
+// DeleteTagsRequest represents a DeleteTags request.
+type DeleteTagsRequest struct {
+	ResourceIDs []string `json:"ResourceIds,omitempty"`
+	Tags        []Tag    `json:"Tags,omitempty"`
+}
 
 // CreateKeyPairRequest represents a CreateKeyPair request.
 type CreateKeyPairRequest struct {
@@ -375,6 +385,22 @@ type XMLAuthorizeSecurityGroupIngressResponse struct {
 // XMLAuthorizeSecurityGroupEgressResponse is the XML response for AuthorizeSecurityGroupEgress.
 type XMLAuthorizeSecurityGroupEgressResponse struct {
 	XMLName   xml.Name `xml:"AuthorizeSecurityGroupEgressResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
+}
+
+// XMLCreateTagsResponse is the XML response for CreateTags.
+type XMLCreateTagsResponse struct {
+	XMLName   xml.Name `xml:"CreateTagsResponse"`
+	Xmlns     string   `xml:"xmlns,attr"`
+	RequestID string   `xml:"requestId"`
+	Return    bool     `xml:"return"`
+}
+
+// XMLDeleteTagsResponse is the XML response for DeleteTags.
+type XMLDeleteTagsResponse struct {
+	XMLName   xml.Name `xml:"DeleteTagsResponse"`
 	Xmlns     string   `xml:"xmlns,attr"`
 	RequestID string   `xml:"requestId"`
 	Return    bool     `xml:"return"`
