@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -32,6 +35,13 @@ func (s *Service) CreateLoadBalancer(w http.ResponseWriter, r *http.Request) {
 		writeELBError(w, errInvalidParameter, "Name is required", http.StatusBadRequest)
 
 		return
+	}
+
+	if tags := parseELBTagsFromForm(r.Form, "Tags.member"); tags != nil {
+		req.Tags = tags
+	}
+	if len(req.Subnets) == 0 {
+		req.Subnets = parseELBSubnetMappingsFromForm(r.Form, "SubnetMappings.member")
 	}
 
 	lb, err := s.storage.CreateLoadBalancer(r.Context(), &req)
@@ -111,6 +121,99 @@ func (s *Service) DescribeLoadBalancers(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+
+// DescribeTags handles the DescribeTags action.
+func (s *Service) DescribeTags(w http.ResponseWriter, r *http.Request) {
+	var req DescribeTagsRequest
+	if err := readELBJSONRequest(r, &req); err != nil {
+		writeELBError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+
+	if len(req.ResourceArns) == 0 {
+		req.ResourceArns = parseELBStringMembersFromForm(r.Form, "ResourceArns.member")
+	}
+
+	descriptions, err := s.storage.DescribeTags(r.Context(), req.ResourceArns)
+	if err != nil {
+		handleELBError(w, err)
+
+		return
+	}
+
+	xmlDescriptions := make([]XMLTagDescription, 0, len(descriptions))
+	for _, description := range descriptions {
+		xmlDescriptions = append(xmlDescriptions, convertToXMLTagDescription(description))
+	}
+
+	writeELBXMLResponse(w, XMLDescribeTagsResponse{
+		Xmlns: elbXMLNS,
+		Result: XMLDescribeTagsResult{
+			TagDescriptions: XMLTagDescriptions{Members: xmlDescriptions},
+		},
+		ResponseMetadata: XMLResponseMetadata{RequestID: uuid.New().String()},
+	})
+}
+
+// AddTags handles the AddTags action.
+func (s *Service) AddTags(w http.ResponseWriter, r *http.Request) {
+	var req AddTagsRequest
+	if err := readELBJSONRequest(r, &req); err != nil {
+		writeELBError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+
+	if len(req.ResourceArns) == 0 {
+		req.ResourceArns = parseELBStringMembersFromForm(r.Form, "ResourceArns.member")
+	}
+	if tags := parseELBTagsFromForm(r.Form, "Tags.member"); tags != nil {
+		req.Tags = tags
+	}
+
+	if err := s.storage.AddTags(r.Context(), req.ResourceArns, req.Tags); err != nil {
+		handleELBError(w, err)
+
+		return
+	}
+
+	writeELBXMLResponse(w, XMLAddTagsResponse{
+		Xmlns:            elbXMLNS,
+		Result:           XMLAddTagsResult{},
+		ResponseMetadata: XMLResponseMetadata{RequestID: uuid.New().String()},
+	})
+}
+
+// RemoveTags handles the RemoveTags action.
+func (s *Service) RemoveTags(w http.ResponseWriter, r *http.Request) {
+	var req RemoveTagsRequest
+	if err := readELBJSONRequest(r, &req); err != nil {
+		writeELBError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+
+	if len(req.ResourceArns) == 0 {
+		req.ResourceArns = parseELBStringMembersFromForm(r.Form, "ResourceArns.member")
+	}
+	if len(req.TagKeys) == 0 {
+		req.TagKeys = parseELBStringMembersFromForm(r.Form, "TagKeys.member")
+	}
+
+	if err := s.storage.RemoveTags(r.Context(), req.ResourceArns, req.TagKeys); err != nil {
+		handleELBError(w, err)
+
+		return
+	}
+
+	writeELBXMLResponse(w, XMLRemoveTagsResponse{
+		Xmlns:            elbXMLNS,
+		Result:           XMLRemoveTagsResult{},
+		ResponseMetadata: XMLResponseMetadata{RequestID: uuid.New().String()},
+	})
+}
+
 // CreateTargetGroup handles the CreateTargetGroup action.
 func (s *Service) CreateTargetGroup(w http.ResponseWriter, r *http.Request) {
 	var req CreateTargetGroupRequest
@@ -124,6 +227,10 @@ func (s *Service) CreateTargetGroup(w http.ResponseWriter, r *http.Request) {
 		writeELBError(w, errInvalidParameter, "Name is required", http.StatusBadRequest)
 
 		return
+	}
+
+	if tags := parseELBTagsFromForm(r.Form, "Tags.member"); tags != nil {
+		req.Tags = tags
 	}
 
 	tg, err := s.storage.CreateTargetGroup(r.Context(), &req)
@@ -203,6 +310,7 @@ func (s *Service) DescribeTargetGroups(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+
 // RegisterTargets handles the RegisterTargets action.
 func (s *Service) RegisterTargets(w http.ResponseWriter, r *http.Request) {
 	var req RegisterTargetsRequest
@@ -276,6 +384,7 @@ func (s *Service) CreateListener(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+
 	listener, err := s.storage.CreateListener(r.Context(), &req)
 	if err != nil {
 		handleELBError(w, err)
@@ -293,6 +402,7 @@ func (s *Service) CreateListener(w http.ResponseWriter, r *http.Request) {
 		ResponseMetadata: XMLResponseMetadata{RequestID: uuid.New().String()},
 	})
 }
+
 
 // DeleteListener handles the DeleteListener action.
 func (s *Service) DeleteListener(w http.ResponseWriter, r *http.Request) {
@@ -340,16 +450,19 @@ func (s *Service) DispatchAction(w http.ResponseWriter, r *http.Request) {
 // getActionHandler returns the handler function for the given action.
 func (s *Service) getActionHandler(action string) func(http.ResponseWriter, *http.Request) {
 	handlers := map[string]func(http.ResponseWriter, *http.Request){
-		"CreateLoadBalancer":    s.CreateLoadBalancer,
-		"DeleteLoadBalancer":    s.DeleteLoadBalancer,
-		"DescribeLoadBalancers": s.DescribeLoadBalancers,
-		"CreateTargetGroup":     s.CreateTargetGroup,
-		"DeleteTargetGroup":     s.DeleteTargetGroup,
-		"DescribeTargetGroups":  s.DescribeTargetGroups,
-		"RegisterTargets":       s.RegisterTargets,
-		"DeregisterTargets":     s.DeregisterTargets,
-		"CreateListener":        s.CreateListener,
-		"DeleteListener":        s.DeleteListener,
+		"CreateLoadBalancer":             s.CreateLoadBalancer,
+		"DeleteLoadBalancer":             s.DeleteLoadBalancer,
+		"DescribeLoadBalancers":          s.DescribeLoadBalancers,
+		"DescribeTags":                   s.DescribeTags,
+		"AddTags":                        s.AddTags,
+		"RemoveTags":                     s.RemoveTags,
+		"CreateTargetGroup":              s.CreateTargetGroup,
+		"DeleteTargetGroup":              s.DeleteTargetGroup,
+		"DescribeTargetGroups":           s.DescribeTargetGroups,
+		"RegisterTargets":                s.RegisterTargets,
+		"DeregisterTargets":              s.DeregisterTargets,
+		"CreateListener":                 s.CreateListener,
+		"DeleteListener":                 s.DeleteListener,
 	}
 
 	return handlers[action]
@@ -404,6 +517,7 @@ func convertToXMLTargetGroup(tg *TargetGroup) XMLTargetGroup {
 	}
 }
 
+
 // convertToXMLListener converts a Listener to XMLListener.
 func convertToXMLListener(l *Listener) XMLListener {
 	actions := make([]XMLAction, 0, len(l.DefaultActions))
@@ -419,6 +533,21 @@ func convertToXMLListener(l *Listener) XMLListener {
 		DefaultActions:  XMLActions{Members: actions},
 	}
 }
+
+
+// convertToXMLTagDescription converts a TagDescription to XMLTagDescription.
+func convertToXMLTagDescription(description *TagDescription) XMLTagDescription {
+	tags := make([]XMLTag, 0, len(description.Tags))
+	for _, tag := range description.Tags {
+		tags = append(tags, XMLTag(tag))
+	}
+
+	return XMLTagDescription{
+		ResourceArn: description.ResourceArn,
+		Tags:        XMLTags{Members: tags},
+	}
+}
+
 
 // readELBJSONRequest reads and decodes JSON request body.
 func readELBJSONRequest(r *http.Request, v any) error {
@@ -437,6 +566,132 @@ func readELBJSONRequest(r *http.Request, v any) error {
 
 	return nil
 }
+
+func parseELBStringMembersFromForm(form url.Values, prefix string) []string {
+	indexed := make(map[int]string)
+	for key, values := range form {
+		if !strings.HasPrefix(key, prefix+".") || len(values) == 0 {
+			continue
+		}
+
+		index, err := strconv.Atoi(strings.TrimPrefix(key, prefix+"."))
+		if err != nil {
+			continue
+		}
+
+		indexed[index] = values[0]
+	}
+
+	if len(indexed) == 0 {
+		return nil
+	}
+
+	indexes := make([]int, 0, len(indexed))
+	for index := range indexed {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+
+	values := make([]string, 0, len(indexes))
+	for _, index := range indexes {
+		values = append(values, indexed[index])
+	}
+
+	return values
+}
+
+func parseELBTagsFromForm(form url.Values, prefix string) []Tag {
+	entries := make(map[int]*Tag)
+	for key, values := range form {
+		if len(values) == 0 || !strings.HasPrefix(key, prefix+".") {
+			continue
+		}
+
+		parts := strings.Split(key, ".")
+		if len(parts) != 4 {
+			continue
+		}
+
+		index, err := strconv.Atoi(parts[2])
+		if err != nil {
+			continue
+		}
+
+		entry := entries[index]
+		if entry == nil {
+			entry = &Tag{}
+			entries[index] = entry
+		}
+
+		switch parts[3] {
+		case "Key":
+			entry.Key = values[0]
+		case "Value":
+			entry.Value = values[0]
+		}
+	}
+
+	if len(entries) == 0 {
+		return nil
+	}
+
+	indexes := make([]int, 0, len(entries))
+	for index := range entries {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+
+	tags := make([]Tag, 0, len(indexes))
+	for _, index := range indexes {
+		tag := entries[index]
+		if tag == nil || tag.Key == "" {
+			continue
+		}
+
+		tags = append(tags, *tag)
+	}
+
+	return tags
+}
+
+func parseELBSubnetMappingsFromForm(form url.Values, prefix string) []string {
+	indexed := make(map[int]string)
+	for key, values := range form {
+		if len(values) == 0 || !strings.HasPrefix(key, prefix+".") || !strings.HasSuffix(key, ".SubnetId") {
+			continue
+		}
+
+		parts := strings.Split(key, ".")
+		if len(parts) != 4 {
+			continue
+		}
+
+		index, err := strconv.Atoi(parts[2])
+		if err != nil {
+			continue
+		}
+
+		indexed[index] = values[0]
+	}
+
+	if len(indexed) == 0 {
+		return nil
+	}
+
+	indexes := make([]int, 0, len(indexed))
+	for index := range indexed {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+
+	subnetIDs := make([]string, 0, len(indexes))
+	for _, index := range indexes {
+		subnetIDs = append(subnetIDs, indexed[index])
+	}
+
+	return subnetIDs
+}
+
 
 // extractAction extracts the action name from the request.
 func extractAction(r *http.Request) string {
