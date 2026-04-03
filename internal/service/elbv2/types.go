@@ -92,10 +92,17 @@ type Target struct {
 	AvailabilityZone string
 }
 
-// TargetDescription represents a target with its health status.
-type TargetDescription struct {
-	Target      Target
-	HealthState string
+// TargetHealthDescription represents a target with its health status.
+type TargetHealthDescription struct {
+	Target       Target
+	TargetHealth TargetHealth
+}
+
+// TargetHealth represents the health of a target.
+type TargetHealth struct {
+	State       string
+	Reason      string
+	Description string
 }
 
 // Tag represents a resource tag.
@@ -177,6 +184,12 @@ type DescribeTargetGroupsRequest struct {
 	TargetGroupArns []string `json:"TargetGroupArns,omitempty"`
 	Names           []string `json:"Names,omitempty"`
 	LoadBalancerArn string   `json:"LoadBalancerArn,omitempty"`
+}
+
+// DescribeTargetHealthRequest represents a DescribeTargetHealth request.
+type DescribeTargetHealthRequest struct {
+	TargetGroupArn string   `json:"TargetGroupArn"`
+	Targets        []Target `json:"Targets,omitempty"`
 }
 
 // RegisterTargetsRequest represents a RegisterTargets request.
@@ -362,9 +375,47 @@ type XMLDescribeTargetGroupsResult struct {
 	TargetGroups XMLTargetGroups `xml:"TargetGroups"`
 }
 
+// XMLDescribeTargetHealthResponse is the XML response for DescribeTargetHealth.
+type XMLDescribeTargetHealthResponse struct {
+	XMLName          xml.Name                      `xml:"DescribeTargetHealthResponse"`
+	Xmlns            string                        `xml:"xmlns,attr"`
+	Result           XMLDescribeTargetHealthResult `xml:"DescribeTargetHealthResult"`
+	ResponseMetadata XMLResponseMetadata           `xml:"ResponseMetadata"`
+}
+
+// XMLDescribeTargetHealthResult contains the result of DescribeTargetHealth.
+type XMLDescribeTargetHealthResult struct {
+	TargetHealthDescriptions XMLTargetHealthDescriptions `xml:"TargetHealthDescriptions"`
+}
+
 // XMLTargetGroups contains a list of target groups.
 type XMLTargetGroups struct {
 	Members []XMLTargetGroup `xml:"member"`
+}
+
+// XMLTargetHealthDescriptions contains a list of target health descriptions.
+type XMLTargetHealthDescriptions struct {
+	Members []XMLTargetHealthDescription `xml:"member"`
+}
+
+// XMLTargetHealthDescription represents target health in XML format.
+type XMLTargetHealthDescription struct {
+	Target       XMLTarget       `xml:"Target"`
+	TargetHealth XMLTargetHealth `xml:"TargetHealth"`
+}
+
+// XMLTarget represents a target in XML format.
+type XMLTarget struct {
+	ID               string `xml:"Id"`
+	Port             int    `xml:"Port,omitempty"`
+	AvailabilityZone string `xml:"AvailabilityZone,omitempty"`
+}
+
+// XMLTargetHealth represents target health in XML format.
+type XMLTargetHealth struct {
+	State       string `xml:"State"`
+	Reason      string `xml:"Reason,omitempty"`
+	Description string `xml:"Description,omitempty"`
 }
 
 // XMLTargetGroup represents a target group in XML format.

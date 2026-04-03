@@ -63,6 +63,7 @@ func (s *Service) Actions() []string {
 		"DeleteTargetGroup",
 		"DescribeTargetGroups",
 		"DescribeTargetGroupAttributes",
+		"DescribeTargetHealth",
 		"ModifyTargetGroupAttributes",
 		"RegisterTargets",
 		"DeregisterTargets",

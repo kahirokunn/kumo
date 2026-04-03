@@ -448,6 +448,49 @@ func TestELBv2_RegisterAndDeregisterTargets(t *testing.T) {
 }
 
 
+func TestELBv2_DescribeTargetHealth(t *testing.T) {
+	client := newELBv2Client(t)
+	ctx := t.Context()
+
+	createResult, err := client.CreateTargetGroup(ctx, &elasticloadbalancingv2.CreateTargetGroupInput{
+		Name:       aws.String("test-target-health-tg"),
+		Protocol:   types.ProtocolEnumHttp,
+		Port:       aws.Int32(80),
+		VpcId:      aws.String("vpc-12345678"),
+		TargetType: types.TargetTypeEnumIp,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tgArn := createResult.TargetGroups[0].TargetGroupArn
+
+	t.Cleanup(func() {
+		_, _ = client.DeleteTargetGroup(context.Background(), &elasticloadbalancingv2.DeleteTargetGroupInput{
+			TargetGroupArn: tgArn,
+		})
+	})
+
+	_, err = client.RegisterTargets(ctx, &elasticloadbalancingv2.RegisterTargetsInput{
+		TargetGroupArn: tgArn,
+		Targets: []types.TargetDescription{
+			{Id: aws.String("10.0.1.10"), Port: aws.Int32(80)},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	describeResult, err := client.DescribeTargetHealth(ctx, &elasticloadbalancingv2.DescribeTargetHealthInput{
+		TargetGroupArn: tgArn,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	golden.New(t, golden.WithIgnoreFields("ResultMetadata")).Assert(t.Name()+"_describe", describeResult)
+}
+
 func TestELBv2_CreateAndDeleteListener(t *testing.T) {
 	client := newELBv2Client(t)
 	ctx := t.Context()
