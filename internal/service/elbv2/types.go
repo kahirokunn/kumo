@@ -23,6 +23,7 @@ type LoadBalancer struct {
 	SecurityGroups        []string
 	IPAddressType         string
 	Tags                  []Tag
+	Attributes            map[string]string
 }
 
 // LoadBalancerState represents the state of a load balancer.
@@ -49,19 +50,23 @@ type TargetGroup struct {
 	TargetGroupArn             string
 	TargetGroupName            string
 	Protocol                   string
+	ProtocolVersion            string
 	Port                       int
 	VpcID                      string
+	IPAddressType              string
 	HealthCheckEnabled         bool
 	HealthCheckIntervalSeconds int
 	HealthCheckPath            string
 	HealthCheckPort            string
 	HealthCheckProtocol        string
+	Matcher                    *Matcher
 	HealthCheckTimeoutSeconds  int
 	HealthyThresholdCount      int
 	UnhealthyThresholdCount    int
 	TargetType                 string // instance | ip | lambda | alb
 	LoadBalancerArns           []string
 	Tags                       []Tag
+	Attributes                 map[string]string
 }
 
 // Listener represents an ELB listener.
@@ -105,6 +110,18 @@ type TagDescription struct {
 	Tags        []Tag
 }
 
+// Matcher represents a target group matcher.
+type Matcher struct {
+	HTTPCode string `json:"HttpCode,omitempty"`
+	GRPCCode string `json:"GrpcCode,omitempty"`
+}
+
+// Attribute represents a resource attribute.
+type Attribute struct {
+	Key   string `json:"Key"`
+	Value string `json:"Value"`
+}
+
 // Request types.
 
 // CreateLoadBalancerRequest represents a CreateLoadBalancer request.
@@ -133,12 +150,15 @@ type DescribeLoadBalancersRequest struct {
 type CreateTargetGroupRequest struct {
 	Name                       string `json:"Name"`
 	Protocol                   string `json:"Protocol,omitempty"`
+	ProtocolVersion            string `json:"ProtocolVersion,omitempty"`
 	Port                       int    `json:"Port,omitempty"`
 	VpcID                      string `json:"VpcId,omitempty"`
+	IPAddressType              string `json:"IpAddressType,omitempty"`
 	HealthCheckProtocol        string `json:"HealthCheckProtocol,omitempty"`
 	HealthCheckPort            string `json:"HealthCheckPort,omitempty"`
 	HealthCheckEnabled         bool   `json:"HealthCheckEnabled,omitempty"`
 	HealthCheckPath            string `json:"HealthCheckPath,omitempty"`
+	Matcher                    *Matcher `json:"Matcher,omitempty"`
 	HealthCheckIntervalSeconds int    `json:"HealthCheckIntervalSeconds,omitempty"`
 	HealthCheckTimeoutSeconds  int    `json:"HealthCheckTimeoutSeconds,omitempty"`
 	HealthyThresholdCount      int    `json:"HealthyThresholdCount,omitempty"`
@@ -199,6 +219,28 @@ type AddTagsRequest struct {
 type RemoveTagsRequest struct {
 	ResourceArns []string `json:"ResourceArns,omitempty"`
 	TagKeys      []string `json:"TagKeys,omitempty"`
+}
+
+// DescribeTargetGroupAttributesRequest represents a DescribeTargetGroupAttributes request.
+type DescribeTargetGroupAttributesRequest struct {
+	TargetGroupArn string `json:"TargetGroupArn"`
+}
+
+// ModifyTargetGroupAttributesRequest represents a ModifyTargetGroupAttributes request.
+type ModifyTargetGroupAttributesRequest struct {
+	TargetGroupArn string      `json:"TargetGroupArn"`
+	Attributes     []Attribute `json:"Attributes,omitempty"`
+}
+
+// DescribeLoadBalancerAttributesRequest represents a DescribeLoadBalancerAttributes request.
+type DescribeLoadBalancerAttributesRequest struct {
+	LoadBalancerArn string `json:"LoadBalancerArn"`
+}
+
+// ModifyLoadBalancerAttributesRequest represents a ModifyLoadBalancerAttributes request.
+type ModifyLoadBalancerAttributesRequest struct {
+	LoadBalancerArn string      `json:"LoadBalancerArn"`
+	Attributes      []Attribute `json:"Attributes,omitempty"`
 }
 
 // XML Response types.
@@ -330,13 +372,16 @@ type XMLTargetGroup struct {
 	TargetGroupArn             string              `xml:"TargetGroupArn"`
 	TargetGroupName            string              `xml:"TargetGroupName"`
 	Protocol                   string              `xml:"Protocol,omitempty"`
+	ProtocolVersion            string              `xml:"ProtocolVersion,omitempty"`
 	Port                       int                 `xml:"Port,omitempty"`
 	VpcID                      string              `xml:"VpcId,omitempty"`
+	IPAddressType              string              `xml:"IpAddressType,omitempty"`
 	HealthCheckEnabled         bool                `xml:"HealthCheckEnabled"`
 	HealthCheckIntervalSeconds int                 `xml:"HealthCheckIntervalSeconds"`
 	HealthCheckPath            string              `xml:"HealthCheckPath,omitempty"`
 	HealthCheckPort            string              `xml:"HealthCheckPort"`
 	HealthCheckProtocol        string              `xml:"HealthCheckProtocol"`
+	Matcher                    *XMLMatcher         `xml:"Matcher,omitempty"`
 	HealthCheckTimeoutSeconds  int                 `xml:"HealthCheckTimeoutSeconds"`
 	HealthyThresholdCount      int                 `xml:"HealthyThresholdCount"`
 	UnhealthyThresholdCount    int                 `xml:"UnhealthyThresholdCount"`
@@ -430,6 +475,12 @@ type XMLTag struct {
 	Value string `xml:"Value"`
 }
 
+// XMLMatcher represents a matcher in XML format.
+type XMLMatcher struct {
+	HTTPCode string `xml:"HttpCode,omitempty"`
+	GRPCCode string `xml:"GrpcCode,omitempty"`
+}
+
 // XMLAddTagsResponse is the XML response for AddTags.
 type XMLAddTagsResponse struct {
 	XMLName          xml.Name            `xml:"AddTagsResponse"`
@@ -451,6 +502,69 @@ type XMLRemoveTagsResponse struct {
 
 // XMLRemoveTagsResult is an empty result for RemoveTags.
 type XMLRemoveTagsResult struct{}
+
+// XMLDescribeTargetGroupAttributesResponse is the XML response for DescribeTargetGroupAttributes.
+type XMLDescribeTargetGroupAttributesResponse struct {
+	XMLName          xml.Name                               `xml:"DescribeTargetGroupAttributesResponse"`
+	Xmlns            string                                 `xml:"xmlns,attr"`
+	Result           XMLDescribeTargetGroupAttributesResult `xml:"DescribeTargetGroupAttributesResult"`
+	ResponseMetadata XMLResponseMetadata                    `xml:"ResponseMetadata"`
+}
+
+// XMLDescribeTargetGroupAttributesResult contains the result of DescribeTargetGroupAttributes.
+type XMLDescribeTargetGroupAttributesResult struct {
+	Attributes XMLAttributes `xml:"Attributes"`
+}
+
+// XMLModifyTargetGroupAttributesResponse is the XML response for ModifyTargetGroupAttributes.
+type XMLModifyTargetGroupAttributesResponse struct {
+	XMLName          xml.Name                             `xml:"ModifyTargetGroupAttributesResponse"`
+	Xmlns            string                               `xml:"xmlns,attr"`
+	Result           XMLModifyTargetGroupAttributesResult `xml:"ModifyTargetGroupAttributesResult"`
+	ResponseMetadata XMLResponseMetadata                  `xml:"ResponseMetadata"`
+}
+
+// XMLModifyTargetGroupAttributesResult contains the result of ModifyTargetGroupAttributes.
+type XMLModifyTargetGroupAttributesResult struct {
+	Attributes XMLAttributes `xml:"Attributes"`
+}
+
+// XMLDescribeLoadBalancerAttributesResponse is the XML response for DescribeLoadBalancerAttributes.
+type XMLDescribeLoadBalancerAttributesResponse struct {
+	XMLName          xml.Name                                `xml:"DescribeLoadBalancerAttributesResponse"`
+	Xmlns            string                                  `xml:"xmlns,attr"`
+	Result           XMLDescribeLoadBalancerAttributesResult `xml:"DescribeLoadBalancerAttributesResult"`
+	ResponseMetadata XMLResponseMetadata                     `xml:"ResponseMetadata"`
+}
+
+// XMLDescribeLoadBalancerAttributesResult contains the result of DescribeLoadBalancerAttributes.
+type XMLDescribeLoadBalancerAttributesResult struct {
+	Attributes XMLAttributes `xml:"Attributes"`
+}
+
+// XMLModifyLoadBalancerAttributesResponse is the XML response for ModifyLoadBalancerAttributes.
+type XMLModifyLoadBalancerAttributesResponse struct {
+	XMLName          xml.Name                              `xml:"ModifyLoadBalancerAttributesResponse"`
+	Xmlns            string                                `xml:"xmlns,attr"`
+	Result           XMLModifyLoadBalancerAttributesResult `xml:"ModifyLoadBalancerAttributesResult"`
+	ResponseMetadata XMLResponseMetadata                   `xml:"ResponseMetadata"`
+}
+
+// XMLModifyLoadBalancerAttributesResult contains the result of ModifyLoadBalancerAttributes.
+type XMLModifyLoadBalancerAttributesResult struct {
+	Attributes XMLAttributes `xml:"Attributes"`
+}
+
+// XMLAttributes contains a list of attributes.
+type XMLAttributes struct {
+	Members []XMLAttribute `xml:"member"`
+}
+
+// XMLAttribute represents an attribute in XML format.
+type XMLAttribute struct {
+	Key   string `xml:"Key"`
+	Value string `xml:"Value"`
+}
 
 // XMLListeners contains a list of listeners.
 type XMLListeners struct {
