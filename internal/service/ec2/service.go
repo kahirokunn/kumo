@@ -77,6 +77,8 @@ func (s *Service) Actions() []string {
 		"CreateSubnet",
 		"DeleteSubnet",
 		"DescribeSubnets",
+		// Availability Zone operations
+		"DescribeAvailabilityZones",
 		// Internet Gateway operations
 		"CreateInternetGateway",
 		"AttachInternetGateway",

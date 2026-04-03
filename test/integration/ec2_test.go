@@ -14,6 +14,11 @@ import (
 	"github.com/sivchari/golden"
 )
 
+const (
+	testAvailabilityZoneName = "us-east-1a"
+	testAvailabilityZoneID   = "use1-az1"
+)
+
 func newEC2Client(t *testing.T) *ec2.Client {
 	t.Helper()
 
@@ -321,6 +326,83 @@ func TestEC2_DescribeVpcs(t *testing.T) {
 	golden.New(t, golden.WithIgnoreFields("VpcId", "OwnerId", "ResultMetadata")).Assert(t.Name(), descResult)
 }
 
+func TestEC2_DescribeAvailabilityZones(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := t.Context()
+
+	// Create a subnet so the test exercises the AZ ID path end to end.
+	vpcResult, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{
+		CidrBlock: aws.String("10.0.0.0/16"),
+	})
+	if err != nil {
+		t.Fatalf("failed to create VPC: %v", err)
+	}
+
+	vpcID := *vpcResult.Vpc.VpcId
+
+	t.Cleanup(func() {
+		_, _ = client.DeleteVpc(context.Background(), &ec2.DeleteVpcInput{
+			VpcId: aws.String(vpcID),
+		})
+	})
+
+	subnetResult, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:            aws.String(vpcID),
+		CidrBlock:        aws.String("10.0.1.0/24"),
+		AvailabilityZone: aws.String(testAvailabilityZoneName),
+	})
+	if err != nil {
+		t.Fatalf("failed to create subnet: %v", err)
+	}
+
+	subnetAZID := aws.ToString(subnetResult.Subnet.AvailabilityZoneId)
+	if subnetAZID == "" {
+		t.Fatal("subnet availability zone ID is required")
+	}
+	if subnetAZID != testAvailabilityZoneID {
+		t.Fatalf("unexpected subnet availability zone ID: got %q want %q", subnetAZID, testAvailabilityZoneID)
+	}
+
+	t.Cleanup(func() {
+		_, _ = client.DeleteSubnet(context.Background(), &ec2.DeleteSubnetInput{
+			SubnetId: subnetResult.Subnet.SubnetId,
+		})
+	})
+
+	descResult, err := client.DescribeAvailabilityZones(ctx, &ec2.DescribeAvailabilityZonesInput{
+		ZoneIds: []string{subnetAZID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(descResult.AvailabilityZones) != 1 {
+		t.Fatalf("unexpected availability zone count: got %d want 1", len(descResult.AvailabilityZones))
+	}
+	if got := aws.ToString(descResult.AvailabilityZones[0].ZoneId); got != testAvailabilityZoneID {
+		t.Fatalf("unexpected availability zone ID: got %q want %q", got, testAvailabilityZoneID)
+	}
+	if got := aws.ToString(descResult.AvailabilityZones[0].ZoneName); got != testAvailabilityZoneName {
+		t.Fatalf("unexpected availability zone name: got %q want %q", got, testAvailabilityZoneName)
+	}
+	if got := aws.ToString(descResult.AvailabilityZones[0].ZoneType); got != "availability-zone" {
+		t.Fatalf("unexpected availability zone type: got %q want %q", got, "availability-zone")
+	}
+	golden.New(t, golden.WithIgnoreFields(
+		"Geography",
+		"GroupLongName",
+		"GroupName",
+		"Messages",
+		"NetworkBorderGroup",
+		"OptInStatus",
+		"ParentZoneId",
+		"ParentZoneName",
+		"RegionName",
+		"State",
+		"SubGeography",
+		"ResultMetadata",
+	)).Assert(t.Name(), descResult)
+}
+
 func TestEC2_CreateAndDeleteSubnet(t *testing.T) {
 	client := newEC2Client(t)
 	ctx := t.Context()
@@ -360,6 +442,87 @@ func TestEC2_CreateAndDeleteSubnet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to delete subnet: %v", err)
 	}
+}
+
+func TestEC2_DescribeSubnets(t *testing.T) {
+	client := newEC2Client(t)
+	ctx := t.Context()
+
+	vpcResult, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{
+		CidrBlock: aws.String("10.0.0.0/16"),
+	})
+	if err != nil {
+		t.Fatalf("failed to create VPC: %v", err)
+	}
+
+	vpcID := *vpcResult.Vpc.VpcId
+
+	t.Cleanup(func() {
+		_, _ = client.DeleteVpc(context.Background(), &ec2.DeleteVpcInput{
+			VpcId: aws.String(vpcID),
+		})
+	})
+
+	subnetResult, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:            aws.String(vpcID),
+		CidrBlock:        aws.String("10.0.1.0/24"),
+		AvailabilityZone: aws.String(testAvailabilityZoneName),
+	})
+	if err != nil {
+		t.Fatalf("failed to create subnet: %v", err)
+	}
+
+	subnetID := *subnetResult.Subnet.SubnetId
+	subnetAZID := aws.ToString(subnetResult.Subnet.AvailabilityZoneId)
+	if subnetAZID == "" {
+		t.Fatal("subnet availability zone ID is required")
+	}
+	if subnetAZID != testAvailabilityZoneID {
+		t.Fatalf("unexpected subnet availability zone ID: got %q want %q", subnetAZID, testAvailabilityZoneID)
+	}
+
+	t.Cleanup(func() {
+		_, _ = client.DeleteSubnet(context.Background(), &ec2.DeleteSubnetInput{
+			SubnetId: aws.String(subnetID),
+		})
+	})
+
+	descResult, err := client.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{
+		SubnetIds: []string{subnetID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(descResult.Subnets) != 1 {
+		t.Fatalf("unexpected subnet count: got %d want 1", len(descResult.Subnets))
+	}
+	if got := aws.ToString(descResult.Subnets[0].AvailabilityZone); got != testAvailabilityZoneName {
+		t.Fatalf("unexpected subnet availability zone: got %q want %q", got, testAvailabilityZoneName)
+	}
+	if got := aws.ToString(descResult.Subnets[0].AvailabilityZoneId); got != testAvailabilityZoneID {
+		t.Fatalf("unexpected subnet availability zone ID: got %q want %q", got, testAvailabilityZoneID)
+	}
+	golden.New(t, golden.WithIgnoreFields(
+		"AssignIpv6AddressOnCreation",
+		"BlockPublicAccessStates",
+		"CustomerOwnedIpv4Pool",
+		"DefaultForAz",
+		"EnableDns64",
+		"EnableLniAtDeviceIndex",
+		"Ipv6CidrBlockAssociationSet",
+		"Ipv6Native",
+		"MapCustomerOwnedIpOnLaunch",
+		"OwnerId",
+		"OutpostArn",
+		"PrivateDnsNameOptionsOnLaunch",
+		"State",
+		"SubnetArn",
+		"SubnetId",
+		"Tags",
+		"Type",
+		"VpcId",
+		"ResultMetadata",
+	)).Assert(t.Name(), descResult)
 }
 
 func TestEC2_CreateInternetGatewayAndAttach(t *testing.T) {

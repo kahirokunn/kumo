@@ -575,6 +575,34 @@ func (s *Service) DescribeSubnets(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// DescribeAvailabilityZones handles the DescribeAvailabilityZones action.
+func (s *Service) DescribeAvailabilityZones(w http.ResponseWriter, r *http.Request) {
+	var req DescribeAvailabilityZonesRequest
+	if err := readEC2JSONRequest(r, &req); err != nil {
+		writeError(w, errInvalidParameter, "Failed to parse request body", http.StatusBadRequest)
+
+		return
+	}
+
+	zones, err := s.storage.DescribeAvailabilityZones(r.Context(), req.ZoneNames, req.ZoneIDs)
+	if err != nil {
+		handleError(w, err)
+
+		return
+	}
+
+	xmlZones := make([]XMLAvailabilityZone, 0, len(zones))
+	for _, zone := range zones {
+		xmlZones = append(xmlZones, convertToXMLAvailabilityZone(zone))
+	}
+
+	writeEC2XMLResponse(w, XMLDescribeAvailabilityZonesResponse{
+		Xmlns:                ec2XMLNS,
+		RequestID:            uuid.New().String(),
+		AvailabilityZoneInfo: XMLAvailabilityZoneSet{Items: xmlZones},
+	})
+}
+
 // CreateInternetGateway handles the CreateInternetGateway action.
 func (s *Service) CreateInternetGateway(w http.ResponseWriter, r *http.Request) {
 	var req CreateInternetGatewayRequest
@@ -880,9 +908,10 @@ func (s *Service) getActionHandler(action string) func(http.ResponseWriter, *htt
 		"DeleteVpc":    s.DeleteVpc,
 		"DescribeVpcs": s.DescribeVpcs,
 		// Subnet operations
-		"CreateSubnet":    s.CreateSubnet,
-		"DeleteSubnet":    s.DeleteSubnet,
-		"DescribeSubnets": s.DescribeSubnets,
+		"CreateSubnet":              s.CreateSubnet,
+		"DeleteSubnet":              s.DeleteSubnet,
+		"DescribeSubnets":           s.DescribeSubnets,
+		"DescribeAvailabilityZones": s.DescribeAvailabilityZones,
 		// Internet gateway operations
 		"CreateInternetGateway":    s.CreateInternetGateway,
 		"AttachInternetGateway":    s.AttachInternetGateway,
@@ -1037,10 +1066,21 @@ func convertToXMLSubnet(subnet *Subnet) XMLSubnet {
 		VpcID:                   subnet.VpcID,
 		CidrBlock:               subnet.CidrBlock,
 		AvailabilityZone:        subnet.AvailabilityZone,
+		AvailabilityZoneID:      subnet.AvailabilityZoneID,
 		AvailableIPAddressCount: subnet.AvailableIPAddressCount,
 		State:                   subnet.State,
 		MapPublicIPOnLaunch:     subnet.MapPublicIPOnLaunch,
 		TagSet:                  XMLTagSet{Items: tags},
+	}
+}
+
+func convertToXMLAvailabilityZone(zone *AvailabilityZone) XMLAvailabilityZone {
+	return XMLAvailabilityZone{
+		ZoneName:   zone.ZoneName,
+		ZoneID:     zone.ZoneID,
+		RegionName: zone.RegionName,
+		State:      zone.State,
+		ZoneType:   zone.ZoneType,
 	}
 }
 
