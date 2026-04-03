@@ -90,6 +90,7 @@ type Storage interface {
 	CreateSubnet(ctx context.Context, req *CreateSubnetRequest) (*Subnet, error)
 	DeleteSubnet(ctx context.Context, subnetID string) error
 	DescribeSubnets(ctx context.Context, subnetIDs []string, filters map[string][]string) ([]*Subnet, error)
+	DescribeAvailabilityZones(ctx context.Context, zoneNames, zoneIDs []string) ([]*AvailabilityZone, error)
 
 	// Internet Gateway operations
 	CreateInternetGateway(ctx context.Context, req *CreateInternetGatewayRequest) (*InternetGateway, error)
@@ -123,31 +124,33 @@ type Reservation struct {
 
 // MemoryStorage implements Storage with in-memory data.
 type MemoryStorage struct {
-	mu               sync.RWMutex                `json:"-"`
-	Instances        map[string]*Instance        `json:"instances"`
-	Reservations     map[string]*Reservation     `json:"reservations"`
-	SecurityGroups   map[string]*SecurityGroup   `json:"securityGroups"`
-	KeyPairs         map[string]*KeyPair         `json:"keyPairs"`
-	Vpcs             map[string]*Vpc             `json:"vpcs"`
-	Subnets          map[string]*Subnet          `json:"subnets"`
-	InternetGateways map[string]*InternetGateway `json:"internetGateways"`
-	RouteTables      map[string]*RouteTable      `json:"routeTables"`
-	NatGateways      map[string]*NatGateway      `json:"natGateways"`
-	dataDir          string
+	mu                sync.RWMutex                 `json:"-"`
+	Instances         map[string]*Instance         `json:"instances"`
+	Reservations      map[string]*Reservation      `json:"reservations"`
+	SecurityGroups    map[string]*SecurityGroup    `json:"securityGroups"`
+	KeyPairs          map[string]*KeyPair          `json:"keyPairs"`
+	Vpcs              map[string]*Vpc              `json:"vpcs"`
+	Subnets           map[string]*Subnet           `json:"subnets"`
+	AvailabilityZones map[string]*AvailabilityZone `json:"availabilityZones"`
+	InternetGateways  map[string]*InternetGateway  `json:"internetGateways"`
+	RouteTables       map[string]*RouteTable       `json:"routeTables"`
+	NatGateways       map[string]*NatGateway       `json:"natGateways"`
+	dataDir           string
 }
 
 // NewMemoryStorage creates a new in-memory EC2 storage.
 func NewMemoryStorage(opts ...Option) *MemoryStorage {
 	s := &MemoryStorage{
-		Instances:        make(map[string]*Instance),
-		Reservations:     make(map[string]*Reservation),
-		SecurityGroups:   make(map[string]*SecurityGroup),
-		KeyPairs:         make(map[string]*KeyPair),
-		Vpcs:             make(map[string]*Vpc),
-		Subnets:          make(map[string]*Subnet),
-		InternetGateways: make(map[string]*InternetGateway),
-		RouteTables:      make(map[string]*RouteTable),
-		NatGateways:      make(map[string]*NatGateway),
+		Instances:         make(map[string]*Instance),
+		Reservations:      make(map[string]*Reservation),
+		SecurityGroups:    make(map[string]*SecurityGroup),
+		KeyPairs:          make(map[string]*KeyPair),
+		Vpcs:              make(map[string]*Vpc),
+		Subnets:           make(map[string]*Subnet),
+		AvailabilityZones: defaultAvailabilityZones(),
+		InternetGateways:  make(map[string]*InternetGateway),
+		RouteTables:       make(map[string]*RouteTable),
+		NatGateways:       make(map[string]*NatGateway),
 	}
 	for _, o := range opts {
 		o(s)
@@ -210,6 +213,10 @@ func (m *MemoryStorage) UnmarshalJSON(data []byte) error {
 
 	if m.Subnets == nil {
 		m.Subnets = make(map[string]*Subnet)
+	}
+
+	if m.AvailabilityZones == nil {
+		m.AvailabilityZones = defaultAvailabilityZones()
 	}
 
 	if m.InternetGateways == nil {
@@ -1151,6 +1158,7 @@ func (m *MemoryStorage) CreateSubnet(_ context.Context, req *CreateSubnetRequest
 		subnet.AvailabilityZone = "us-east-1a"
 	}
 
+	subnet.AvailabilityZoneID = m.ensureAvailabilityZoneLocked(subnet.AvailabilityZone).ZoneID
 	m.Subnets[subnet.SubnetID] = subnet
 
 	return subnet, nil
@@ -1207,6 +1215,47 @@ func (m *MemoryStorage) DescribeSubnets(_ context.Context, subnetIDs []string, f
 	return subnets, nil
 }
 
+// DescribeAvailabilityZones describes availability zones.
+func (m *MemoryStorage) DescribeAvailabilityZones(_ context.Context, zoneNames, zoneIDs []string) ([]*AvailabilityZone, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if len(zoneIDs) == 0 && len(zoneNames) == 0 {
+		zones := make([]*AvailabilityZone, 0, len(m.AvailabilityZones))
+		for _, zone := range m.AvailabilityZones {
+			zones = append(zones, zone)
+		}
+
+		return zones, nil
+	}
+
+	if len(zoneIDs) > 0 {
+		zones := make([]*AvailabilityZone, 0, len(zoneIDs))
+		for _, zoneID := range zoneIDs {
+			zone, exists := m.lookupAvailabilityZoneByIDLocked(zoneID)
+			if !exists {
+				return nil, availabilityZoneNotFoundError("ID", zoneID)
+			}
+
+			zones = append(zones, zone)
+		}
+
+		return zones, nil
+	}
+
+	zones := make([]*AvailabilityZone, 0, len(zoneNames))
+	for _, zoneName := range zoneNames {
+		zone, exists := m.AvailabilityZones[zoneName]
+		if !exists {
+			return nil, availabilityZoneNotFoundError("name", zoneName)
+		}
+
+		zones = append(zones, zone)
+	}
+
+	return zones, nil
+}
+
 // matchSubnetFilters checks if a subnet matches the given filters.
 func (m *MemoryStorage) matchSubnetFilters(subnet *Subnet, filters map[string][]string) bool {
 	if len(filters) == 0 {
@@ -1227,6 +1276,119 @@ func (m *MemoryStorage) matchSubnetFilters(subnet *Subnet, filters map[string][]
 	}
 
 	return true
+}
+
+func (m *MemoryStorage) ensureAvailabilityZoneLocked(zoneName string) *AvailabilityZone {
+	if zone, exists := m.AvailabilityZones[zoneName]; exists {
+		return zone
+	}
+
+	zone := newAvailabilityZone(zoneName)
+	m.AvailabilityZones[zone.ZoneName] = zone
+
+	return zone
+}
+
+func (m *MemoryStorage) lookupAvailabilityZoneByIDLocked(zoneID string) (*AvailabilityZone, bool) {
+	for _, zone := range m.AvailabilityZones {
+		if zone.ZoneID == zoneID {
+			return zone, true
+		}
+	}
+
+	return nil, false
+}
+
+func defaultAvailabilityZones() map[string]*AvailabilityZone {
+	zones := []*AvailabilityZone{
+		newAvailabilityZone("us-east-1a"),
+		newAvailabilityZone("us-east-1b"),
+		newAvailabilityZone("us-east-1c"),
+	}
+
+	result := make(map[string]*AvailabilityZone, len(zones))
+	for _, zone := range zones {
+		result[zone.ZoneName] = zone
+	}
+
+	return result
+}
+
+func newAvailabilityZone(zoneName string) *AvailabilityZone {
+	regionName := availabilityZoneRegion(zoneName)
+
+	return &AvailabilityZone{
+		ZoneName:   zoneName,
+		ZoneID:     buildAvailabilityZoneID(regionName, zoneName),
+		RegionName: regionName,
+		State:      "available",
+		ZoneType:   "availability-zone",
+	}
+}
+
+func availabilityZoneRegion(zoneName string) string {
+	base := zoneName
+	if n := len(base); n > 0 {
+		last := base[n-1]
+		if last >= 'a' && last <= 'z' {
+			base = base[:n-1]
+		}
+	}
+
+	parts := strings.Split(base, "-")
+	if len(parts) >= 3 {
+		return strings.Join(parts[:3], "-")
+	}
+
+	return base
+}
+
+func buildAvailabilityZoneID(regionName, zoneName string) string {
+	index := 1
+	if n := len(zoneName); n > 0 {
+		last := zoneName[n-1]
+		if last >= 'a' && last <= 'z' {
+			index = int(last-'a') + 1
+		}
+	}
+
+	return fmt.Sprintf("%s-az%d", shortRegionCode(regionName), index)
+}
+
+func shortRegionCode(regionName string) string {
+	parts := strings.Split(regionName, "-")
+	if len(parts) < 3 {
+		return strings.ReplaceAll(regionName, "-", "")
+	}
+
+	code := parts[0]
+	for _, part := range parts[1 : len(parts)-1] {
+		code += shortRegionPart(part)
+	}
+
+	return code + parts[len(parts)-1]
+}
+
+func shortRegionPart(part string) string {
+	switch part {
+	case "northeast":
+		return "ne"
+	case "southeast":
+		return "se"
+	case "northwest":
+		return "nw"
+	case "southwest":
+		return "sw"
+	default:
+		return part[:1]
+	}
+}
+
+func availabilityZoneNotFoundError(kind, value string) error {
+	return &Error{
+		Code:    errInvalidParameter,
+		Message: fmt.Sprintf("The availability zone %s '%s' does not exist", kind, value),
+	}
 }
 
 // CreateInternetGateway creates a new internet gateway.

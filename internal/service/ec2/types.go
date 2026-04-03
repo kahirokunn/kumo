@@ -492,10 +492,20 @@ type Subnet struct {
 	VpcID                   string
 	CidrBlock               string
 	AvailabilityZone        string
+	AvailabilityZoneID      string
 	AvailableIPAddressCount int
 	State                   string
 	MapPublicIPOnLaunch     bool
 	Tags                    []Tag
+}
+
+// AvailabilityZone represents an availability zone.
+type AvailabilityZone struct {
+	ZoneName   string
+	ZoneID     string
+	RegionName string
+	State      string
+	ZoneType   string
 }
 
 // InternetGateway represents an internet gateway.
@@ -581,6 +591,12 @@ type DeleteSubnetRequest struct {
 // DescribeSubnetsRequest represents a DescribeSubnets request.
 type DescribeSubnetsRequest struct {
 	SubnetIDs []string `json:"SubnetIds,omitempty"`
+}
+
+// DescribeAvailabilityZonesRequest represents a DescribeAvailabilityZones request.
+type DescribeAvailabilityZonesRequest struct {
+	ZoneIDs   []string `json:"ZoneIds,omitempty"`
+	ZoneNames []string `json:"ZoneNames,omitempty"`
 }
 
 // CreateInternetGatewayRequest represents a CreateInternetGateway request.
@@ -684,6 +700,7 @@ type XMLSubnet struct {
 	VpcID                   string    `xml:"vpcId"`
 	CidrBlock               string    `xml:"cidrBlock"`
 	AvailabilityZone        string    `xml:"availabilityZone"`
+	AvailabilityZoneID      string    `xml:"availabilityZoneId,omitempty"`
 	AvailableIPAddressCount int       `xml:"availableIpAddressCount"`
 	State                   string    `xml:"state"`
 	MapPublicIPOnLaunch     bool      `xml:"mapPublicIpOnLaunch"`
@@ -709,6 +726,28 @@ type XMLDescribeSubnetsResponse struct {
 // XMLSubnetSet contains a list of subnets.
 type XMLSubnetSet struct {
 	Items []XMLSubnet `xml:"item"`
+}
+
+// XMLDescribeAvailabilityZonesResponse is the XML response for DescribeAvailabilityZones.
+type XMLDescribeAvailabilityZonesResponse struct {
+	XMLName              xml.Name               `xml:"DescribeAvailabilityZonesResponse"`
+	Xmlns                string                 `xml:"xmlns,attr"`
+	RequestID            string                 `xml:"requestId"`
+	AvailabilityZoneInfo XMLAvailabilityZoneSet `xml:"availabilityZoneInfo"`
+}
+
+// XMLAvailabilityZoneSet contains a list of availability zones.
+type XMLAvailabilityZoneSet struct {
+	Items []XMLAvailabilityZone `xml:"item"`
+}
+
+// XMLAvailabilityZone represents an availability zone in XML format.
+type XMLAvailabilityZone struct {
+	ZoneName   string `xml:"zoneName"`
+	ZoneID     string `xml:"zoneId,omitempty"`
+	RegionName string `xml:"regionName,omitempty"`
+	State      string `xml:"zoneState,omitempty"`
+	ZoneType   string `xml:"zoneType,omitempty"`
 }
 
 // XMLCreateInternetGatewayResponse is the XML response for CreateInternetGateway.
